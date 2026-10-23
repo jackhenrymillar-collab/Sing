@@ -1,5 +1,7 @@
 #include "VoiceData.h"
 
+#include <mutex>
+
 #include "Voice/VoiceAnalysis.h"
 
 namespace sing
@@ -49,6 +51,19 @@ VoiceData::Ptr VoiceData::fromAudio (juce::AudioBuffer<float> buffer, double rat
 }
 
 VoiceData::Ptr VoiceData::fromPlaceholder (PlaceholderVowel vowel)
+{
+    // Making a placeholder takes a moment, and hosts can switch presets many times a second,
+    // so each one is made once and shared. Voices are immutable, so sharing is safe.
+    static std::mutex lock;
+    static std::array<Ptr, std::size (kPlaceholders)> made;
+    const auto index = (size_t) (&infoFor (vowel) - kPlaceholders);
+    const std::scoped_lock hold (lock);
+    if (made[index] == nullptr)
+        made[index] = makePlaceholder (vowel);
+    return made[index];
+}
+
+VoiceData::Ptr VoiceData::makePlaceholder (PlaceholderVowel vowel)
 {
     const auto p = makePlaceholderVoice (vowel, 48000.0, 5.0f);
     juce::AudioBuffer<float> buffer (1, (int) p.samples.size());

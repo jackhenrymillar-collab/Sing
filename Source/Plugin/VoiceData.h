@@ -66,6 +66,7 @@ public:
 
 private:
     VoiceData() = default;
+    static Ptr makePlaceholder (PlaceholderVowel);
     void analyse();
     void computePeaks();
 
