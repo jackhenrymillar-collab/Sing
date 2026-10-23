@@ -1,0 +1,463 @@
+// Tests for pitch detection, the formant shifter, the loop hand-off and the synth voices.
+
+#include "TestHelpers.h"
+
+#include "Voice/FormantShifter.h"
+#include "Voice/PlaceholderVoices.h"
+#include "Voice/SingSynth.h"
+#include "Voice/SourceExchange.h"
+#include "Voice/VoiceAnalysis.h"
+
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
+
+using namespace sing::test;
+using Catch::Matchers::WithinAbs;
+
+namespace
+{
+// Share of energy above 1.5 kHz: a rough brightness measure, to see formants move.
+double brightness (const std::vector<float>& x, int from, int n)
+{
+    // One-pole high-pass at about 1.5 kHz.
+    const double a = std::exp (-twoPi * 1500.0 / sr);
+    double lp = 0.0, hi = 0.0, all = 0.0;
+    for (int i = from; i < from + n; ++i)
+    {
+        lp = (1.0 - a) * x[(size_t) i] + a * lp;
+        const double h = x[(size_t) i] - lp;
+        hi += h * h;
+        all += (double) x[(size_t) i] * x[(size_t) i];
+    }
+    return all > 0.0 ? hi / all : 0.0;
+}
+
+std::vector<float> shift (const std::vector<float>& x, float periodSamples, float ratio, int* latency = nullptr)
+{
+    FormantShifter f;
+    f.prepare (sr, 0.04f);
+    const int d = f.start (periodSamples, ratio);
+    if (latency != nullptr)
+        *latency = d;
+    std::vector<float> y (x.size());
+    for (size_t i = 0; i < x.size(); i += 256)
+    {
+        const int n = (int) std::min<size_t> (256, x.size() - i);
+        f.process (x.data() + i, nullptr, y.data() + i, nullptr, n);
+    }
+    return y;
+}
+
+std::shared_ptr<const LoopSource> placeholderSource (PlaceholderVowel vowel)
+{
+    const auto v = makePlaceholderVoice (vowel, sr, 4.0f);
+    LoopSettings s;
+    s.start = (int) (1.0 * sr);
+    s.length = (int) (2.0 * sr);
+    s.fade = (int) (0.3 * sr);
+    s.pitchPeriod = v.rootHz > 0.0f ? (float) (sr / v.rootHz) : 0.0f;
+    const float* ch[] = { v.samples.data() };
+    return LoopSource::build (ch, 1, (int) v.samples.size(), sr, s);
+}
+
+Render renderSynth (SingSynth& synth, int n, int block = 256)
+{
+    Render r { std::vector<float> ((size_t) n), std::vector<float> ((size_t) n) };
+    for (int i = 0; i < n; i += block)
+        synth.render (r.left.data() + i, r.right.data() + i, std::min (block, n - i));
+    return r;
+}
+
+std::vector<float> mono (const Render& r)
+{
+    std::vector<float> m (r.left.size());
+    for (size_t i = 0; i < m.size(); ++i)
+        m[i] = 0.5f * (r.left[i] + r.right[i]);
+    return m;
+}
+
+SynthSettings plainSynth (float rootHz)
+{
+    SynthSettings s;
+    s.voice.attackSeconds = 0.0f;
+    s.voice.releaseSeconds = 0.5f;
+    s.voice.stretch = 0.3f;
+    s.voice.spread = 0.0f;
+    s.voice.rootHz = rootHz;
+    s.polyphony = 8;
+    return s;
+}
+} // namespace
+
+//==============================================================================
+TEST_CASE ("Pitch detection finds the root of pitched voices")
+{
+    CHECK_THAT (detectPitch (sine (220.0, 48000).data(), 48000, sr).hz, WithinAbs (220.0, 0.5));
+    CHECK_THAT (detectPitch (voice (48000).data(), 48000, sr).hz, WithinAbs (220.0, 2.0));
+
+    const auto ooh = makePlaceholderVoice (PlaceholderVowel::ooh, sr, 3.0f);
+    const auto ah = makePlaceholderVoice (PlaceholderVowel::ah, sr, 3.0f);
+    const auto hum = makePlaceholderVoice (PlaceholderVowel::hum, sr, 3.0f);
+    CHECK_THAT (detectPitch (ooh.samples.data(), (int) ooh.samples.size(), sr).hz, WithinAbs (ooh.rootHz, 2.0));
+    CHECK_THAT (detectPitch (ah.samples.data(), (int) ah.samples.size(), sr).hz, WithinAbs (ah.rootHz, 2.0));
+    CHECK_THAT (detectPitch (hum.samples.data(), (int) hum.samples.size(), sr).hz, WithinAbs (hum.rootHz, 2.5));
+    CHECK_THAT (hzToMidi (440.0f), WithinAbs (69.0, 1e-4));
+    CHECK_THAT (midiToHz (60.0f), WithinAbs (261.63, 0.01));
+}
+
+TEST_CASE ("Pitch detection calls breaths and noise unpitched")
+{
+    const auto breath = makePlaceholderVoice (PlaceholderVowel::breath, sr, 3.0f);
+    CHECK_FALSE (detectPitch (breath.samples.data(), (int) breath.samples.size(), sr).pitched());
+    const auto n = noise (48000);
+    CHECK_FALSE (detectPitch (n.data(), 48000, sr).pitched());
+}
+
+TEST_CASE ("Silence trim finds the audible part")
+{
+    std::vector<float> x (96000, 0.0f);
+    const auto tone = sine (300.0, 48000);
+    std::copy (tone.begin(), tone.end(), x.begin() + 24000);
+    const auto r = findAudibleRange (x.data(), (int) x.size(), sr);
+    CHECK (std::abs (r.start - 24000) <= 960);
+    CHECK (std::abs (r.end - 72000) <= 960);
+}
+
+//==============================================================================
+TEST_CASE ("Formant shifter at ratio 1 passes the voice through, delayed")
+{
+    for (float period : { (float) (sr / 220.0), 0.0f })
+    {
+        const auto x = voice (48000);
+        int d = 0;
+        const auto y = shift (x, period, 1.0f, &d);
+        double maxErr = 0.0;
+        for (int i = d + 10; i < 48000; ++i)
+            maxErr = std::max (maxErr, (double) std::abs (y[(size_t) i] - x[(size_t) (i - d)]));
+        INFO ("period " << period << ", latency " << d << ", max error " << maxErr);
+        CHECK (maxErr < 2.0e-3);
+        CHECK (d < 0.03 * sr);
+    }
+}
+
+TEST_CASE ("Formant shifter moves the vowel colour and keeps the pitch")
+{
+    const auto ooh = makePlaceholderVoice (PlaceholderVowel::ooh, sr, 3.0f);
+    const float period = (float) (sr / ooh.rootHz);
+    const int from = 48000, n = 48000;
+    const double base = brightness (ooh.samples, from, n);
+
+    const auto up = shift (ooh.samples, period, std::exp2 (7.0f / 12.0f));
+    const auto down = shift (ooh.samples, period, std::exp2 (-7.0f / 12.0f));
+    const double bUp = brightness (up, from, n), bDown = brightness (down, from, n);
+    INFO ("brightness: original " << base << ", up " << bUp << ", down " << bDown);
+    CHECK (bUp > base * 1.5);
+    CHECK (bDown < base * 0.8);
+
+    CHECK_THAT (detectPitch (up.data() + from, n, sr).hz, WithinAbs (ooh.rootHz, 3.0));
+    CHECK_THAT (detectPitch (down.data() + from, n, sr).hz, WithinAbs (ooh.rootHz, 3.0));
+
+    // Level stays about the same.
+    const double lev = db (rms (up.data() + from, n) / rms (ooh.samples.data() + from, n));
+    INFO ("level change up " << lev << " dB");
+    CHECK (std::abs (lev) < 3.0);
+}
+
+TEST_CASE ("Formant shifter on a breath brightens and darkens it too")
+{
+    const auto breath = makePlaceholderVoice (PlaceholderVowel::breath, sr, 3.0f);
+    const double base = brightness (breath.samples, 24000, 96000);
+    const auto up = shift (breath.samples, 0.0f, 1.6f);
+    const auto down = shift (breath.samples, 0.0f, 0.6f);
+    CHECK (brightness (up, 24000, 96000) > base * 1.3);
+    CHECK (brightness (down, 24000, 96000) < base * 0.8);
+}
+
+//==============================================================================
+TEST_CASE ("Source exchange hands loops over and frees them")
+{
+    SourceExchange ex;
+    auto x = voice (48000);
+
+    auto a = makeSource (x, { 0, 24000, 0, LoopDirection::forward });
+    auto b = makeSource (x, { 0, 12000, 0, LoopDirection::forward });
+    auto c = makeSource (x, { 0, 6000, 0, LoopDirection::forward });
+    std::weak_ptr<const LoopSource> wa = a, wb = b;
+    const LoopSource* rawA = a.get();
+    const LoopSource* rawC = c.get();
+
+    CHECK (ex.acquire() == nullptr);
+    REQUIRE (ex.publish (std::move (a)));
+    CHECK (ex.acquire() == rawA);
+
+    // b is replaced before the audio thread sees it: freed straight away.
+    REQUIRE (ex.publish (std::move (b)));
+    REQUIRE (ex.publish (std::move (c)));
+    ex.collectGarbage();
+    CHECK (wb.expired());
+
+    CHECK (ex.acquire() == rawC);
+    CHECK_FALSE (wa.expired());   // still in use until retired
+    ex.retire (rawA);
+    ex.collectGarbage();
+    CHECK (wa.expired());
+
+    // The latest loop is never retired.
+    ex.retire (rawC);
+    ex.collectGarbage();
+    CHECK (ex.acquire() == rawC);
+}
+
+//==============================================================================
+TEST_CASE ("Envelope: Attack and Release times")
+{
+    Envelope e;
+    e.prepare (sr);
+    e.start (0.5f);
+    e.setTimes (0.5f, 2.0f);
+    std::vector<float> g ((size_t) sr);
+    e.render (g.data(), (int) (0.25 * sr));
+    CHECK_THAT (e.level(), WithinAbs (0.5, 0.01));
+    e.render (g.data(), (int) (0.26 * sr));
+    CHECK_THAT (e.level(), WithinAbs (1.0, 1e-6));
+
+    e.release (2.0f);
+    e.render (g.data(), (int) sr);
+    e.render (g.data(), (int) sr);
+    CHECK_THAT (db (e.level()), WithinAbs (-60.0, 0.5));
+}
+
+TEST_CASE ("Spread copies fan out and join one by one")
+{
+    CHECK (SingVoice::copyShape (0, 0.0f).weight == 1.0f);
+    for (int i = 1; i < SingVoice::maxCopies; ++i)
+        CHECK (SingVoice::copyShape (i, 0.0f).weight == 0.0f);
+    for (int i = 0; i < SingVoice::maxCopies; ++i)
+        CHECK (SingVoice::copyShape (i, 1.0f).weight == 1.0f);
+    CHECK (SingVoice::copyShape (1, 1.0f).cents > 0.0f);
+    CHECK (SingVoice::copyShape (2, 1.0f).cents < 0.0f);
+    CHECK_THAT (SingVoice::copyShape (6, 1.0f).pan, WithinAbs (-1.0, 1e-6));
+    CHECK_THAT (SingVoice::copyShape (5, 1.0f).cents, WithinAbs (22.0, 1e-4));
+}
+
+//==============================================================================
+TEST_CASE ("Synth: a key plays the voice at that pitch")
+{
+    auto src = placeholderSource (PlaceholderVowel::ooh);
+    SingSynth synth;
+    synth.prepare (sr, 256);
+    synth.setSource (src.get());
+    synth.setSettings (plainSynth (220.0f));
+
+    // A3 is 220 Hz, the voice's root: play an octave up.
+    synth.noteOn (57 + 12, 1.0f);
+    const auto r = renderSynth (synth, 48000);
+    const auto m = mono (r);
+    CHECK_THAT (detectPitch (m.data() + 9600, 38400, sr).hz, WithinAbs (440.0, 4.0));
+    CHECK (rms (m.data() + 9600, 38400) > 0.05);
+    CHECK (allFinite (r));
+}
+
+TEST_CASE ("Synth: Formant keeps the pitch of a played note")
+{
+    auto src = placeholderSource (PlaceholderVowel::ooh);
+    SingSynth synth;
+    synth.prepare (sr, 256);
+    synth.setSource (src.get());
+    auto s = plainSynth (220.0f);
+    s.voice.formantSemitones = -6.0f;
+    synth.setSettings (s);
+    synth.noteOn (57 + 5, 1.0f);   // D4
+    const auto m = mono (renderSynth (synth, 48000));
+    CHECK_THAT (detectPitch (m.data() + 9600, 38400, sr).hz, WithinAbs (220.0 * std::exp2 (5.0 / 12.0), 4.0));
+}
+
+TEST_CASE ("Synth: note off fades out over Release, then the voice frees")
+{
+    auto src = placeholderSource (PlaceholderVowel::ah);
+    SingSynth synth;
+    synth.prepare (sr, 256);
+    synth.setSource (src.get());
+    synth.setSettings (plainSynth (196.0f));
+    synth.noteOn (55, 0.8f);
+    renderSynth (synth, 24000);
+    synth.noteOff (55);
+    CHECK (synth.activeVoiceCount() == 1);
+    const auto r = renderSynth (synth, 48000);
+    CHECK (synth.activeVoiceCount() == 0);
+    CHECK (rms (r.left.data() + 40000, 8000) < 1.0e-4);
+}
+
+TEST_CASE ("Synth: the Voices limit steals notes without clicks")
+{
+    auto src = placeholderSource (PlaceholderVowel::ooh);
+    SingSynth synth;
+    synth.prepare (sr, 256);
+    synth.setSource (src.get());
+    auto s = plainSynth (220.0f);
+    s.polyphony = 4;
+    synth.setSettings (s);
+
+    float maxStep = 0.0f;
+    std::vector<float> all;
+    for (int n = 0; n < 10; ++n)
+    {
+        synth.noteOn (50 + n * 2, 0.9f);
+        const auto r = renderSynth (synth, 2400);
+        all.insert (all.end(), r.left.begin(), r.left.end());
+    }
+    int sounding = 0;
+    for (int i = 0; i < SingSynth::voicePool; ++i)
+        if (synth.getVoice (i).isActive() && ! synth.getVoice (i).isKilled())
+            ++sounding;
+    CHECK (sounding == 4);
+
+    for (size_t i = 1; i < all.size(); ++i)
+        maxStep = std::max (maxStep, std::abs (all[i] - all[i - 1]));
+    INFO ("largest sample step " << maxStep);
+    CHECK (maxStep < 0.25f);
+}
+
+TEST_CASE ("Synth: sustain pedal holds released notes")
+{
+    auto src = placeholderSource (PlaceholderVowel::ooh);
+    SingSynth synth;
+    synth.prepare (sr, 256);
+    synth.setSource (src.get());
+    synth.setSettings (plainSynth (220.0f));
+    synth.setSustain (true);
+    synth.noteOn (60, 1.0f);
+    renderSynth (synth, 4800);
+    synth.noteOff (60);
+    renderSynth (synth, 48000);
+    CHECK (synth.activeVoiceCount() == 1);
+    CHECK_FALSE (synth.getVoice (0).isReleased());
+    synth.setSustain (false);
+    renderSynth (synth, 48000);
+    CHECK (synth.activeVoiceCount() == 0);
+}
+
+TEST_CASE ("Synth: Spread widens the note and keeps its level")
+{
+    auto src = placeholderSource (PlaceholderVowel::ooh);
+    auto play = [&src] (float spread)
+    {
+        SingSynth synth;
+        synth.prepare (sr, 256);
+        synth.setSource (src.get());
+        auto s = plainSynth (220.0f);
+        s.voice.spread = spread;
+        synth.setSettings (s);
+        synth.noteOn (57, 1.0f);
+        return renderSynth (synth, 96000);
+    };
+
+    const auto narrow = play (0.0f);
+    const auto wide = play (1.0f);
+
+    auto sideRatio = [] (const Render& r)
+    {
+        double mid = 0.0, side = 0.0;
+        for (size_t i = 9600; i < r.left.size(); ++i)
+        {
+            const double m = 0.5 * (r.left[i] + r.right[i]), sd = 0.5 * (r.left[i] - r.right[i]);
+            mid += m * m;
+            side += sd * sd;
+        }
+        return side / mid;
+    };
+    INFO ("side/mid: narrow " << sideRatio (narrow) << ", wide " << sideRatio (wide));
+    CHECK (sideRatio (wide) > sideRatio (narrow) * 2.0);
+
+    const double lNarrow = rms (narrow.left.data() + 9600, 86400) + rms (narrow.right.data() + 9600, 86400);
+    const double lWide = rms (wide.left.data() + 9600, 86400) + rms (wide.right.data() + 9600, 86400);
+    INFO ("level change " << db (lWide / lNarrow) << " dB");
+    CHECK (std::abs (db (lWide / lNarrow)) < 3.0);
+    CHECK (allFinite (wide));
+}
+
+TEST_CASE ("Synth: Glide slides from the last note in the set time")
+{
+    auto src = placeholderSource (PlaceholderVowel::ooh);
+    SingSynth synth;
+    synth.prepare (sr, 256);
+    synth.setSource (src.get());
+    auto s = plainSynth (220.0f);
+    s.voice.glideSeconds = 0.5f;
+    synth.setSettings (s);
+    synth.noteOn (57, 1.0f);
+    renderSynth (synth, 4800);
+    synth.noteOn (69, 1.0f);
+    renderSynth (synth, 12000);   // a quarter of a second
+
+    const SingVoice* newest = nullptr;
+    for (int i = 0; i < SingSynth::voicePool; ++i)
+        if (synth.getVoice (i).isActive() && synth.getVoice (i).getNote() == 69)
+            newest = &synth.getVoice (i);
+    REQUIRE (newest != nullptr);
+    CHECK_THAT (newest->currentSemitones(), WithinAbs (6.0, 0.3));
+    renderSynth (synth, 14400);
+    CHECK_THAT (newest->currentSemitones(), WithinAbs (12.0, 1e-4));
+}
+
+TEST_CASE ("Synth: swapping the loop keeps notes playing and releases the old one")
+{
+    auto a = placeholderSource (PlaceholderVowel::ooh);
+    auto b = placeholderSource (PlaceholderVowel::ah);
+    SingSynth synth;
+    synth.prepare (sr, 256);
+    synth.setSource (a.get());
+    synth.setSettings (plainSynth (220.0f));
+    synth.noteOn (57, 1.0f);
+    renderSynth (synth, 4800);
+
+    synth.setSource (b.get());
+    std::vector<const LoopSource*> retired;
+    synth.releaseUnusedSources ([&] (const LoopSource* s) { retired.push_back (s); });
+    CHECK (retired.empty());   // grains still finishing on the old loop
+    const auto r = renderSynth (synth, 24000);
+    synth.releaseUnusedSources ([&] (const LoopSource* s) { retired.push_back (s); });
+    REQUIRE (retired.size() == 1);
+    CHECK (retired[0] == a.get());
+    CHECK (rms (r.left.data() + 12000, 12000) > 0.02);
+}
+
+TEST_CASE ("Placeholder voices are clean")
+{
+    for (auto vowel : { PlaceholderVowel::ooh, PlaceholderVowel::ah, PlaceholderVowel::hum, PlaceholderVowel::breath })
+    {
+        const auto v = makePlaceholderVoice (vowel, 44100.0, 2.0f);
+        float peak = 0.0f;
+        bool finite = true;
+        for (float s : v.samples)
+        {
+            peak = std::max (peak, std::abs (s));
+            finite &= std::isfinite (s);
+        }
+        CHECK (finite);
+        CHECK (peak > 0.3f);
+        CHECK (peak <= 0.5001f);
+    }
+}
+
+TEST_CASE ("Synth: Formant 0 keeps the vowel colour away from the root")
+{
+    auto src = placeholderSource (PlaceholderVowel::ah);
+    auto play = [&src] (int note, float formant)
+    {
+        SingSynth synth;
+        synth.prepare (sr, 256);
+        synth.setSource (src.get());
+        auto s = plainSynth (196.0f);
+        s.voice.formantSemitones = formant;
+        synth.setSettings (s);
+        synth.noteOn (note, 1.0f);
+        return mono (renderSynth (synth, 72000));
+    };
+
+    const double atRoot = brightness (play (55, 0.0f), 24000, 48000);
+    const double fifthUp = brightness (play (62, 0.0f), 24000, 48000);
+    const double fifthUpBright = brightness (play (62, 7.0f), 24000, 48000);
+    INFO ("brightness: root " << atRoot << ", a fifth up " << fifthUp << ", a fifth up with Formant +7 " << fifthUpBright);
+    CHECK (fifthUp < atRoot * 1.35);
+    CHECK (fifthUpBright > fifthUp * 1.3);
+}

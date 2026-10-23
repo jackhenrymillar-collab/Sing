@@ -1,0 +1,650 @@
+#include "PluginEditor.h"
+#include "UI/ReducedMotion.h"
+
+#include <algorithm>
+
+namespace sing
+{
+
+using namespace ui;
+
+namespace
+{
+    constexpr int kPanelWidth = 1040, kPanelHeight = 620;
+    constexpr double kFrameInterval = 1.0 / 30.0;
+    const juce::String kDot (juce::CharPointer_UTF8 ("  \xc2\xb7  "));
+
+    float defaultValueOf (juce::AudioProcessorValueTreeState& state, const char* id)
+    {
+        auto* p = state.getParameter (id);
+        return p->convertFrom0to1 (p->getDefaultValue());
+    }
+
+    double nowSeconds() { return juce::Time::getMillisecondCounterHiRes() * 0.001; }
+
+    bool isAudioFile (const juce::String& path)
+    {
+        return juce::File (path).hasFileExtension ("wav;wave;aif;aiff;aifc;flac");
+    }
+}
+
+//==============================================================================
+// The preset number and name in the middle of the header. Click it for the full list.
+class SingPanel::PresetName final : public juce::Button
+{
+public:
+    PresetName() : juce::Button ("Preset") { setTitle ("Preset list"); }
+
+    void set (const juce::String& number, const juce::String& name, bool edited)
+    {
+        num = number;
+        text = name;
+        modified = edited;
+        setDescription (name);
+        repaint();
+    }
+
+    void paintButton (juce::Graphics& g, bool highlighted, bool) override
+    {
+        const auto b = getLocalBounds().toFloat();
+        const auto font = Fonts::sans (15.0f);
+        const auto shown = text + (modified ? "*" : "");
+        const auto numText = num.isEmpty() ? juce::String() : num;
+        const float numW = numText.isEmpty() ? 0.0f : juce::GlyphArrangement::getStringWidth (font, numText) + 10.0f;
+        const float total = numW + trackedTextWidth (shown, font);
+        const float x = b.getCentreX() - total * 0.5f;
+
+        drawTrackedText (g, numText, b.withX (x).withWidth (numW + 2.0f), font, juce::Justification::centredLeft, Colours::muted);
+        drawTrackedText (g, shown, b.withX (x + numW).withRight (b.getRight()), font, juce::Justification::centredLeft,
+                         highlighted ? Colours::ivory : Colours::text);
+    }
+
+private:
+    juce::String num, text;
+    bool modified = false;
+};
+
+//==============================================================================
+// A round, see-through button over the evening star. The sky draws the star; this adds a
+// faint ring on hover and catches clicks.
+class SingPanel::StarButton final : public juce::Button
+{
+public:
+    StarButton() : juce::Button ("Bypass")
+    {
+        setTitle ("Bypass Sing");
+        setClickingTogglesState (true);
+        setTooltip ("Click the evening star to bypass");
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    }
+
+    bool hitTest (int x, int y) override
+    {
+        const auto c = getLocalBounds().toFloat().getCentre();
+        return c.getDistanceFrom ({ static_cast<float> (x), static_cast<float> (y) }) <= getWidth() * 0.5f;
+    }
+
+    void paintButton (juce::Graphics& g, bool highlighted, bool) override
+    {
+        if (! highlighted && ! hasKeyboardFocus (false))
+            return;
+        g.setColour (Colours::gold.withAlpha (0.45f));
+        g.drawEllipse (getLocalBounds().toFloat().reduced (1.5f), 1.0f);
+    }
+};
+
+//==============================================================================
+// The voice's name and description. Click for the root note and silence trim.
+class SingPanel::VoiceInfo final : public juce::Button
+{
+public:
+    VoiceInfo() : juce::Button ("Voice")
+    {
+        setTitle ("Voice settings");
+        setTooltip ("Root note and silence trim");
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    }
+
+    void set (const juce::String& lengthText, const juce::String& voiceName, const juce::String& line)
+    {
+        length = lengthText;
+        name = voiceName;
+        description = line;
+        repaint();
+    }
+
+    void paintButton (juce::Graphics& g, bool highlighted, bool) override
+    {
+        const float w = static_cast<float> (getWidth());
+        drawTrackedText (g, "VOICE" + kDot + length, { 0.0f, 0.0f, w, 16.0f }, Fonts::sans (12.0f, false, 0.3f),
+                         juce::Justification::centredLeft, Colours::soft);
+        drawTrackedText (g, name, { 0.0f, 18.0f, w, 50.0f }, Fonts::serif (46.0f),
+                         juce::Justification::centredLeft, Colours::ivory);
+        drawTrackedText (g, description, { 0.0f, 70.0f, w, 20.0f }, Fonts::sans (14.0f),
+                         juce::Justification::centredLeft, highlighted ? Colours::ivory : juce::Colour (0xffece4f4));
+    }
+
+private:
+    juce::String length, name, description;
+};
+
+//==============================================================================
+SingPanel::SingPanel (SingProcessor& p)
+    : processor (p), presets (p.getPresets()), presetName (std::make_unique<PresetName>()),
+      voiceInfo (std::make_unique<VoiceInfo>()), waveform (p.getState()),
+      starButton (std::make_unique<StarButton>())
+{
+    setOpaque (true);
+    auto& state = processor.getState();
+
+    // Header
+    for (auto* c : std::initializer_list<juce::Component*> { &previous, &next, presetName.get(), &abButton, &saveButton })
+        addAndMakeVisible (c);
+    previous.onClick = [this] { presets.loadPrevious(); updatePresetDisplay(); };
+    next.onClick = [this] { presets.loadNext(); updatePresetDisplay(); };
+    presetName->onClick = [this] { showPresetMenu(); };
+    abButton.setTooltip ("Compare two settings");
+    abButton.onClick = [this] { presets.toggleAB(); updatePresetDisplay(); };
+    saveButton.onClick = [this]
+    {
+        const auto name = presets.getCurrentIndex() >= presets.getNumFactoryPresets() ? presets.getCurrentName() : juce::String();
+        saveOverlay.show (name);
+    };
+
+    // The voice
+    addAndMakeVisible (*voiceInfo);
+    voiceInfo->onClick = [this] { showVoiceMenu(); };
+    addAndMakeVisible (dropButton);
+    dropButton.onClick = [this] { chooseVoiceFile(); };
+    addAndMakeVisible (waveform);
+
+    // Loop settings
+    const auto names = directionNames();
+    for (int i = 0; i < 3; ++i)
+    {
+        auto& b = directionButtons[(size_t) i];
+        b = std::make_unique<PillToggle> (names[i].toUpperCase(), 36.0f, 11.0f);
+        b->setClickingTogglesState (false);
+        b->onClick = [this, i] { directionAttachment->setValueAsCompleteGesture (static_cast<float> (i)); };
+        addAndMakeVisible (*b);
+    }
+    directionAttachment = std::make_unique<juce::ParameterAttachment> (
+        *state.getParameter (ParamID::direction),
+        [this] (float value)
+        {
+            const int d = juce::roundToInt (value);
+            for (int i = 0; i < 3; ++i)
+                directionButtons[(size_t) i]->setToggleState (i == d, juce::dontSendNotification);
+        });
+
+    for (auto* d : { &loopStart, &loopLength, &loopFade })
+        addAndMakeVisible (d);
+    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::loopStart, loopStart));
+    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::loopLength, loopLength));
+    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::loopFade, loopFade));
+    loopStart.formatValue = [this] (double v) { return formatLoopSeconds (v); };
+    loopLength.formatValue = [this] (double v) { return formatLoopSeconds (v); };
+    loopFade.formatValue = [] (double v) { return formatPercent (static_cast<float> (v)); };
+    loopFade.setDoubleClickReturnValue (true, defaultValueOf (state, ParamID::loopFade));
+    loopStart.setTooltip ("Where the loop starts. Drag up or down, or drag the handles on the voice");
+    loopLength.setTooltip ("How long the loop is");
+    loopFade.setTooltip ("Crossfades the loop's ends into each other. Long fades blur the loop into a steady tone");
+
+    // Knobs
+    const char* ids[numKnobs] = { ParamID::attack, ParamID::release, ParamID::stretch, ParamID::spread, ParamID::formant };
+    const char* labels[numKnobs] = { "Attack", "Release", "Stretch", "Spread", "Formant" };
+    for (int i = 0; i < numKnobs; ++i)
+    {
+        auto& knob = knobs[static_cast<size_t> (i)];
+        addAndMakeVisible (knob);
+        knob.setLabel (labels[i]);
+        sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ids[i], knob));
+        knob.setDoubleClickReturnValue (true, defaultValueOf (state, ids[i]));
+    }
+    knobs[attack].formatValue = knobs[release].formatValue = [] (double v) { return formatSeconds (static_cast<float> (v)); };
+    knobs[stretch].formatValue = [] (double v) { return v >= 97.0 ? juce::String ("Held") : formatPercent (static_cast<float> (v)); };
+    knobs[spread].formatValue = [] (double v) { return formatPercent (static_cast<float> (v)); };
+    knobs[formant].formatValue = [] (double v) { return formatSemitones (static_cast<float> (v)); };
+    knobs[attack].setTooltip ("How slowly each note fades in, up to 20 s");
+    knobs[release].setTooltip ("How slowly each note fades out after you let go, up to 30 s");
+    knobs[stretch].setTooltip ("Slows the voice down without changing its pitch. At the top it holds its breath");
+    knobs[spread].setTooltip ("Up to seven detuned copies across the stereo field: one singer becomes a choir");
+    knobs[formant].setTooltip ("Moves the vowel's character: down is larger and darker, up is smaller and glassier");
+
+    // Bottom row
+    addAndMakeVisible (holdButton);
+    buttonAttachments.push_back (std::make_unique<ButtonAttachment> (state, ParamID::hold, holdButton));
+    holdButton.setTooltip ("Freeze the grain cloud: the pad holds still for as long as the key is down");
+    for (auto* d : { &voicesDragger, &glideDragger, &outputDragger })
+        addAndMakeVisible (d);
+    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::voices, voicesDragger));
+    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::glide, glideDragger));
+    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::output, outputDragger));
+    voicesDragger.formatValue = [] (double v) { return juce::String (juce::roundToInt (v)); };
+    glideDragger.formatValue = [] (double v) { return formatGlide (static_cast<float> (v)); };
+    outputDragger.formatValue = [] (double v) { return formatDecibels (static_cast<float> (v)); };
+    for (auto [d, id] : { std::pair { &voicesDragger, ParamID::voices }, std::pair { &glideDragger, ParamID::glide }, std::pair { &outputDragger, ParamID::output } })
+        d->setDoubleClickReturnValue (true, defaultValueOf (state, id));
+    voicesDragger.setTooltip ("How many notes can sound at once");
+    glideDragger.setTooltip ("Each new note slides from the last one");
+
+    addAndMakeVisible (*starButton);
+    starButton->onClick = [this] { bypassAttachment->setValueAsCompleteGesture (starButton->getToggleState() ? 1.0f : 0.0f); };
+    bypassAttachment = std::make_unique<juce::ParameterAttachment> (
+        *state.getParameter (ParamID::bypass),
+        [this] (float value) { setBypassed (value > 0.5f); });
+
+    addChildComponent (saveOverlay);
+    saveOverlay.onSave = [this] (const juce::String& name)
+    {
+        if (! presets.saveUserPreset (name))
+            showNote ("Couldn't save the preset");
+        updatePresetDisplay();
+    };
+
+    directionAttachment->sendInitialUpdate();
+    bypassAttachment->sendInitialUpdate();
+    updatePresetDisplay();
+    updateVoiceDisplay();
+    setSize (kPanelWidth, kPanelHeight);
+}
+
+SingPanel::~SingPanel() = default;
+
+juce::String SingPanel::formatLoopSeconds (double percent) const
+{
+    const auto v = processor.getVoice();
+    const double seconds = v != nullptr ? percent * 0.01 * v->trimSeconds() : 0.0;
+    return juce::String (seconds, 2) + " s";
+}
+
+void SingPanel::setBypassed (bool shouldBypass)
+{
+    bypassed = shouldBypass;
+    starButton->setToggleState (bypassed, juce::dontSendNotification);
+    starButton->setTitle (bypassed ? "Turn Sing on" : "Bypass Sing");
+    starButton->setTooltip (bypassed ? "Click the evening star to turn Sing back on" : "Click the evening star to bypass");
+    sky.setBypassed (bypassed);
+
+    // Dim the controls while bypassed; they still work.
+    const float alpha = bypassed ? 0.45f : 1.0f;
+    for (auto* c : std::initializer_list<juce::Component*> { voiceInfo.get(), &waveform, &loopStart, &loopLength, &loopFade,
+                                                             &holdButton, &voicesDragger, &glideDragger, &outputDragger })
+        c->setAlpha (alpha);
+    for (auto& b : directionButtons)
+        b->setAlpha (alpha);
+    for (auto& k : knobs)
+        k.setAlpha (alpha);
+    repaint();
+}
+
+void SingPanel::showNote (const juce::String& text)
+{
+    note = text;
+    noteUntil = nowSeconds() + 4.0;
+    updatePresetDisplay();
+    updateVoiceDisplay();
+}
+
+void SingPanel::updatePresetDisplay()
+{
+    const bool edited = presets.isModified();
+    const int index = presets.getCurrentIndex();
+    const auto number = index >= 0 ? juce::String (index + 1).paddedLeft ('0', 3) : juce::String();
+    const auto name = presets.getCurrentName();
+
+    const auto key = number + "|" + name + "|" + (edited ? "*" : "");
+    if (key != lastPresetText || presets.isOnB() != lastAB || presets.getChangeCount() != lastPresetChange)
+    {
+        lastPresetText = key;
+        lastAB = presets.isOnB();
+        lastPresetChange = presets.getChangeCount();
+        presetName->set (number, name, edited);
+        abButton.setLitSide (presets.isOnB() ? 1 : 0);
+    }
+}
+
+void SingPanel::updateVoiceDisplay()
+{
+    const auto v = processor.getVoice();
+    waveform.setVoice (v);
+    if (v == nullptr)
+        return;
+    shownVoice = v->getId();
+
+    juce::String line;
+    if (note.isNotEmpty() && nowSeconds() < noteUntil)
+        line = note;
+    else
+    {
+        note.clear();
+        if (v->isPitched())
+        {
+            const float root = v->rootHz();
+            const int midi = juce::roundToInt (12.0f * std::log2 (root / 440.0f) + 69.0f);
+            line = "Root " + noteName (midi) + (v->getRootOverride() ? " (set by you)" : "") + kDot + v->getDescription();
+        }
+        else
+            line = "Unpitched" + kDot + v->getDescription();
+    }
+
+    const double secs = v->trimSeconds();
+    voiceInfo->set (juce::String (secs, 1) + " s", v->getName(), line);
+    loopStart.repaint();
+    loopLength.repaint();
+}
+
+void SingPanel::showPresetMenu()
+{
+    presets.refreshUserPresets();
+
+    juce::PopupMenu menu;
+    const int factoryCount = presets.getNumFactoryPresets();
+    const int total = presets.getNumPresets();
+    const int current = presets.getCurrentIndex();
+
+    menu.addSectionHeader ("FACTORY");
+    for (int i = 0; i < factoryCount; ++i)
+        menu.addItem (i + 1, juce::String (i + 1).paddedLeft ('0', 3) + "   " + presets.getPresetName (i), true, i == current);
+
+    menu.addSectionHeader ("YOURS");
+    if (total == factoryCount)
+        menu.addItem (-1, "Save a preset and it shows up here", false);
+    for (int i = factoryCount; i < total; ++i)
+        menu.addItem (i + 1, juce::String (i + 1).paddedLeft ('0', 3) + "   " + presets.getPresetName (i), true, i == current);
+
+    menu.addSeparator();
+    constexpr int kShowFolder = 10000;
+    menu.addItem (kShowFolder, "Show presets folder");
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (presetName.get()).withMinimumWidth (260),
+                        [safe = juce::Component::SafePointer<SingPanel> (this)] (int result)
+                        {
+                            if (safe == nullptr || result == 0)
+                                return;
+                            if (result == kShowFolder)
+                            {
+                                auto folder = PresetManager::getUserPresetFolder();
+                                folder.createDirectory();
+                                folder.revealToUser();
+                                return;
+                            }
+                            safe->presets.loadPreset (result - 1);
+                            safe->updatePresetDisplay();
+                            safe->updateVoiceDisplay();
+                        });
+}
+
+void SingPanel::showVoiceMenu()
+{
+    const auto v = processor.getVoice();
+    if (v == nullptr)
+        return;
+
+    constexpr int kAuto = 1, kTrim = 2, kChoose = 3, kNoteBase = 1000;
+    juce::PopupMenu menu, notes;
+
+    const auto detected = v->getDetectedHz();
+    const auto autoText = detected > 0.0f
+        ? "Found automatically: " + noteName (juce::roundToInt (12.0f * std::log2 (detected / 440.0f) + 69.0f))
+              + " (" + juce::String (detected, 1) + " Hz)"
+        : juce::String ("Found automatically: unpitched (keys map from C4)");
+
+    const auto override = v->getRootOverride();
+    for (int octave = 1; octave <= 6; ++octave)
+    {
+        juce::PopupMenu sub;
+        for (int n = 0; n < 12; ++n)
+        {
+            const int midi = 12 * (octave + 1) + n;
+            sub.addItem (kNoteBase + midi, noteName (midi), true, override && *override == midi);
+        }
+        notes.addSubMenu ("Octave " + juce::String (octave), sub);
+    }
+
+    menu.addSectionHeader ("ROOT NOTE");
+    menu.addItem (kAuto, autoText, true, ! override.has_value());
+    menu.addSubMenu ("Set the root yourself", notes);
+    menu.addSeparator();
+    menu.addItem (kTrim, "Trim silence from the start and end", true, v->isTrimmed());
+    menu.addSeparator();
+    menu.addItem (kChoose, "Choose another voice...");
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (voiceInfo.get()).withMinimumWidth (300),
+                        [safe = juce::Component::SafePointer<SingPanel> (this), v] (int result)
+                        {
+                            if (safe == nullptr || result == 0)
+                                return;
+                            if (result == kChoose)
+                                safe->chooseVoiceFile();
+                            else if (result == kAuto)
+                                safe->processor.setVoice (v->withRootOverride (std::nullopt));
+                            else if (result == kTrim)
+                                safe->processor.setVoice (v->withTrim (! v->isTrimmed()));
+                            else if (result >= kNoteBase)
+                                safe->processor.setVoice (v->withRootOverride (result - kNoteBase));
+                            safe->updateVoiceDisplay();
+                        });
+}
+
+void SingPanel::chooseVoiceFile()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Choose a voice", juce::File(), "*.wav;*.wave;*.aif;*.aiff;*.aifc;*.flac");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [safe = juce::Component::SafePointer<SingPanel> (this)] (const juce::FileChooser& fc)
+                          {
+                              if (safe != nullptr && fc.getResult().existsAsFile())
+                                  safe->loadVoice (fc.getResult());
+                          });
+}
+
+void SingPanel::loadVoice (const juce::File& file)
+{
+    juce::String error;
+    if (! processor.loadVoiceFile (file, error))
+        showNote (error);
+    updateVoiceDisplay();
+    updatePresetDisplay();
+}
+
+bool SingPanel::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    return std::any_of (files.begin(), files.end(), isAudioFile);
+}
+
+void SingPanel::fileDragEnter (const juce::StringArray&, int, int) { dropButton.setHighlighted (true); }
+void SingPanel::fileDragExit (const juce::StringArray&) { dropButton.setHighlighted (false); }
+
+void SingPanel::filesDropped (const juce::StringArray& files, int, int)
+{
+    dropButton.setHighlighted (false);
+    for (const auto& f : files)
+        if (isAudioFile (f))
+        {
+            loadVoice (juce::File (f));
+            return;
+        }
+}
+
+void SingPanel::frame (double seconds, bool animate)
+{
+    motion = animate;
+    sky.setMotion (animate);
+    sky.advance (seconds);
+    if (animate)
+        repaint();
+
+    // The play lights. They are motion too, so they hide when Reduce Motion is on.
+    const auto lights = processor.getLights();
+    std::array<float, 4> positions {}, levels {};
+    for (size_t i = 0; i < 4; ++i)
+    {
+        positions[i] = lights[i].position;
+        levels[i] = lights[i].level;
+    }
+    waveform.setLights (positions, levels, animate);
+
+    const auto now = nowSeconds();
+    if (now - lastPresetCheck > 0.2)
+    {
+        lastPresetCheck = now;
+        updatePresetDisplay();
+        const auto v = processor.getVoice();
+        if ((v != nullptr && v->getId() != shownVoice) || (note.isNotEmpty() && now >= noteUntil))
+            updateVoiceDisplay();
+    }
+}
+
+void SingPanel::resized()
+{
+    // Header, from the mockup: preset box at 372,22; A / B and Save end 186 from the right.
+    presetFrame = { 372.0f, 22.0f, 296.0f, 46.0f };
+    previous.setBounds (378, 27, 44, 36);
+    next.setBounds (618, 27, 44, 36);
+    presetName->setBounds (422, 27, 196, 36);
+
+    auto buttonWidth = [] (const juce::String& t) { return 32.0f + trackedTextWidth (t, Fonts::sans (12.0f, false, 0.18f)) + 2.0f; };
+    const float right = 1040.0f - 186.0f;
+    const float saveW = buttonWidth ("SAVE"), abW = buttonWidth ("A / B");
+    saveButton.setBounds (juce::Rectangle<float> (right - saveW, 24.0f, saveW, 40.0f).toNearestInt());
+    abButton.setBounds (juce::Rectangle<float> (right - saveW - 8.0f - abW, 24.0f, abW, 40.0f).toNearestInt());
+
+    // The voice.
+    voiceInfo->setBounds (40, 96, 500, 92);
+    dropButton.setBounds (juce::Rectangle<float> (560.0f, 150.0f, dropButton.preferredWidth(), 40.0f).toNearestInt());
+    waveform.setBounds (juce::Rectangle<float> (40.0f - WaveformView::margin, 206.0f - WaveformView::top,
+                                                WaveformView::width, WaveformView::height).toNearestInt());
+
+    // Loop row at y = 346: LOOP and the direction pills on the left, Start/Length/Fade on the right.
+    const float loopLabelW = trackedTextWidth ("LOOP", Fonts::sans (12.0f, false, 0.24f)) + 6.0f;
+    float x = 40.0f + loopLabelW + 10.0f;
+    for (auto& b : directionButtons)
+    {
+        const float w = b->preferredWidth();
+        b->setBounds (juce::Rectangle<float> (x, 346.0f, w, 36.0f).toNearestInt());
+        x += w + 6.0f;
+    }
+    float rx = 1000.0f;
+    for (auto [d, widest] : { std::pair { &loopFade, juce::String ("100%") }, std::pair { &loopLength, juce::String ("60.00 s") },
+                              std::pair { &loopStart, juce::String ("60.00 s") } })
+    {
+        const float w = d->preferredWidth (widest);
+        d->setBounds (juce::Rectangle<float> (rx - w, 346.0f, w, 36.0f).toNearestInt());
+        rx -= w + 28.0f;
+    }
+
+    // Knobs: five across the 960-wide row, dials starting at y = 398.
+    const float knobW = (960.0f - 4.0f * 8.0f) / 5.0f;
+    for (int i = 0; i < numKnobs; ++i)
+        knobs[static_cast<size_t> (i)].setBounds (
+            juce::Rectangle<float> (40.0f + static_cast<float> (i) * (knobW + 8.0f), 398.0f - Knob::topMargin, knobW, Knob::height).toNearestInt());
+
+    // Bottom row.
+    holdButton.setBounds (juce::Rectangle<float> (40.0f, 556.0f, holdButton.preferredWidth(), 40.0f).toNearestInt());
+    rx = 1000.0f;
+    for (auto [d, widest] : { std::pair { &outputDragger, juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92" "36.0 dB")) }, std::pair { &glideDragger, juce::String ("2.0 s") },
+                              std::pair { &voicesDragger, juce::String ("16") } })
+    {
+        const float w = d->preferredWidth (widest);
+        d->setBounds (juce::Rectangle<float> (rx - w, 562.0f, w, 28.0f).toNearestInt());
+        rx -= w + 26.0f;
+    }
+
+    starButton->setBounds (BlueHourSky::starButtonBounds().toNearestInt());
+    saveOverlay.setBounds (getLocalBounds());
+}
+
+void SingPanel::paint (juce::Graphics& g)
+{
+    sky.draw (g);
+
+    // Logo: a small gold star and the name.
+    g.setColour (Colours::gold);
+    g.fillPath (BlueHourSky::starShape (11.0f), juce::AffineTransform::translation (52.0f, 45.0f));
+    drawTrackedText (g, "SING", { 76.0f, 22.0f, 200.0f, 46.0f }, Fonts::serif (30.0f, false, 0.36f),
+                     juce::Justification::centredLeft, Colours::text);
+
+    // Preset box frame.
+    g.setColour (Colours::night.withAlpha (0.55f));
+    g.fillRoundedRectangle (presetFrame, 12.0f);
+    g.setColour (Colours::gold.withAlpha (0.3f));
+    g.drawRoundedRectangle (presetFrame.reduced (0.5f), 12.0f, 1.0f);
+
+    // LOOP caption.
+    g.setOpacity (bypassed ? 0.45f : 1.0f);
+    drawTrackedText (g, "LOOP", { 40.0f, 346.0f, 80.0f, 36.0f }, Fonts::sans (12.0f, false, 0.24f),
+                     juce::Justification::centredLeft, Colours::soft.withMultipliedAlpha (bypassed ? 0.45f : 1.0f));
+
+    // Hold's glow, like a CSS box-shadow under the lit pill.
+    if (holdButton.getToggleState())
+        drawGlow (g, holdButton.getBounds().toFloat(), 20.0f, 16.0f, Colours::gold.withAlpha (0.5f));
+
+    if (bypassed)
+    {
+        const auto star = BlueHourSky::starCentre();
+        drawTrackedText (g, "BYPASSED", { star.x - 65.0f, 158.0f, 130.0f, 16.0f }, Fonts::sans (11.0f, false, 0.28f),
+                         juce::Justification::centred, Colours::soft);
+    }
+}
+
+//==============================================================================
+SingEditor::SingEditor (SingProcessor& p)
+    : AudioProcessorEditor (p), processor (p), panel (p),
+      vblank (this, [this] (double t) { onFrame (t); })
+{
+    // Read the saved size first: setting the limits below calls resized(), which stores a new one.
+    const float scale = juce::jlimit (0.7f, 1.5f, processor.getUiScale());
+
+    setLookAndFeel (&lookAndFeel);
+    addAndMakeVisible (panel);
+
+    setResizable (true, true);
+    setResizeLimits (kPanelWidth * 7 / 10, kPanelHeight * 7 / 10, kPanelWidth * 3 / 2, kPanelHeight * 3 / 2);
+    if (auto* c = getConstrainer())
+        c->setFixedAspectRatio (static_cast<double> (kPanelWidth) / kPanelHeight);
+
+    motion = ! ui::prefersReducedMotion();
+    panel.frame (0.0, motion);
+    setSize (juce::roundToInt (kPanelWidth * scale), juce::roundToInt (kPanelHeight * scale));
+}
+
+SingEditor::~SingEditor()
+{
+    setLookAndFeel (nullptr);
+}
+
+void SingEditor::resized()
+{
+    const float scale = static_cast<float> (getWidth()) / kPanelWidth;
+    panel.setTransform (juce::AffineTransform::scale (scale));
+    processor.setUiScale (scale);
+}
+
+void SingEditor::onFrame (double timestamp)
+{
+    if (lastFrame < 0.0)
+        lastFrame = timestamp;
+    const double dt = timestamp - lastFrame;
+    if (dt < kFrameInterval - 0.004)
+        return;
+    lastFrame = timestamp;
+
+    // Check the accessibility setting about once a second.
+    if (timestamp - lastMotionCheck > 1.0)
+    {
+        lastMotionCheck = timestamp;
+        const bool wanted = ! ui::prefersReducedMotion();
+        if (wanted != motion)
+        {
+            motion = wanted;
+            panel.repaint();
+        }
+    }
+
+    // Pause the clock rather than jump ahead after the window was hidden.
+    if (motion)
+        animationTime += std::min (dt, 0.1);
+    panel.frame (animationTime, motion);
+}
+
+} // namespace sing
