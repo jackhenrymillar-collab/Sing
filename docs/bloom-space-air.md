@@ -33,6 +33,11 @@ When Bloom is selected, every loop is analysed as it is built (on the loop build
   close sidebands a few Hz apart, so peaks within 3 % (and at least 8 Hz) of a stronger one
   join it, and each harmonic is redrawn as one clean main lobe of the window.
 
+- **Onsets:** sudden rises in the sound (a consonant, a breath in, a hit), found with short
+  frames (1024 samples every 5 ms) by spectral flux: the average rise in dB over 24 bands
+  since 10 ms before, peaks at least 4 dB over the median of the 0.4 s around them. A steady
+  vowel with vibrato has none.
+
 A 2 s loop takes about 25 ms to analyse.
 
 ### Playing (`BloomVoice`)
@@ -54,7 +59,13 @@ Hann window:
      Dolson), and breath stays at its recorded pitch. A held vowel then moves by under
      3 dB, but it is further from the classic sound.
 3. Two inverse FFTs per frame (left and right), however many Spread copies there are.
-4. Move the read position on by a hop times the Stretch speed. Hold stops it.
+4. Move the read position on by a hop times the Stretch speed. Hold stops it: that is
+   freeze, and since every frame gets new random phases the frozen moment stays a living
+   texture rather than a short loop.
+5. **Onsets:** while an onset is inside the window, the read position moves at the
+   recorded speed instead (scaled by the onset's strength), so a transient passes as it was
+   played instead of smearing over many seconds. At Stretch speed 0.05 a window crosses an
+   onset in about 1.8 s instead of about 15 s.
 
 **Level.** The note matches the loop's level at the root, and stays within about 3 dB of it
 over two octaves of keys and the whole Stretch range, as granular does. Harmonics moved up land

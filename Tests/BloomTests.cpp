@@ -340,3 +340,97 @@ TEST_CASE ("Bloom (classic): a held note sounds at once and keeps sounding")
     CHECK (lowest > -12.0);
     CHECK_THAT (detectPitch (m.data() + 6 * 48000, 96000, sr).hz, WithinAbs (196.0, 2.0));
 }
+
+namespace
+{
+// A soft held tone with one sudden loud burst 1.5 s into a 4 s voice; the loop is 1 s to 3 s.
+std::shared_ptr<const LoopSource> burstSource()
+{
+    std::vector<float> v ((size_t) (4 * 48000));
+    uint32_t noise = 1;
+    for (size_t i = 0; i < v.size(); ++i)
+    {
+        const double t = (double) i / sr;
+        float x = 0.05f * (float) std::sin (6.283185307179586 * 220.0 * t);
+        if (t >= 1.5)
+        {
+            noise = noise * 1664525u + 1013904223u;
+            const auto burst = (float) std::exp (-(t - 1.5) / 0.08);
+            x += burst * (0.5f * (float) std::sin (6.283185307179586 * 660.0 * t) + 0.3f * ((float) (noise >> 8) / 8388608.0f - 1.0f));
+        }
+        v[i] = x;
+    }
+    LoopSettings s;
+    s.start = 48000;
+    s.length = 2 * 48000;
+    s.fade = 4800;
+    s.pitchPeriod = (float) (sr / 220.0);
+    s.analyseForBloom = true;
+    const float* ch[] = { v.data() };
+    return LoopSource::build (ch, 1, (int) v.size(), sr, s);
+}
+} // namespace
+
+TEST_CASE ("Bloom: onsets are found where the sound jumps, and not in a steady vowel")
+{
+    auto src = burstSource();
+    const auto* analysis = static_cast<const BloomAnalysis*> (src->analysis (StretchMode::bloom));
+    REQUIRE (analysis != nullptr);
+    const auto& onsets = analysis->onsets();
+    REQUIRE (onsets.size() >= 1);
+    double best = 1.0e9;
+    for (const auto& o : onsets)
+    {
+        std::printf ("  onset at %.3f s in the voice, strength %.2f\n", src->toVoicePosition (o.position) / sr, o.strength);
+        best = std::min (best, std::abs (src->toVoicePosition (o.position) - 1.5 * sr));
+    }
+    CHECK (best < 0.02 * sr);
+
+    for (const auto vowel : { PlaceholderVowel::ah, PlaceholderVowel::ooh })
+    {
+        auto steady = bloomSource (vowel);
+        CHECK (static_cast<const BloomAnalysis*> (steady->analysis (StretchMode::bloom))->onsets().empty());
+    }
+}
+
+TEST_CASE ("Bloom: a stretched note passes an onset at the recorded speed")
+{
+    auto src = burstSource();
+    const auto* analysis = static_cast<const BloomAnalysis*> (src->analysis (StretchMode::bloom));
+    REQUIRE (! analysis->onsets().empty());
+    const double onset = analysis->onsets().front().position;
+
+    double seconds[2] {};
+    for (int i = 0; i < 2; ++i)
+    {
+        BloomVoice voice;
+        voice.prepare (sr);
+        BloomVoice::Parameters p;
+        p.speed = 0.05f;
+        p.onsets = i == 0 ? 0.0f : 1.0f;
+        p.numLayers = 1;
+        p.layers[0].gainLeft = p.layers[0].gainRight = 0.5f;
+        voice.setParameters (p);
+        const double half = 0.5 * (double) analysis->fftSize();
+        double startAt = onset - half - 0.05 * sr;
+        if (startAt < 0.0)
+            startAt += src->size();
+        voice.start (*src, startAt, 7u, 0.0f);
+
+        // Time from the window first reaching the onset to it leaving the window.
+        std::vector<float> l (256), r (256);
+        const double target = src->toVoicePosition (onset) + half;
+        int samples = 0;
+        while (samples < 30 * 48000 && voice.playPosition() < target)
+        {
+            std::fill (l.begin(), l.end(), 0.0f);
+            std::fill (r.begin(), r.end(), 0.0f);
+            voice.render (l.data(), r.data(), 256);
+            samples += 256;
+        }
+        seconds[i] = samples / sr;
+    }
+    std::printf ("  Bloom passing an onset at Stretch speed 0.05: %.1f s stretched, %.1f s with onsets\n", seconds[0], seconds[1]);
+    CHECK (seconds[0] > 8.0);
+    CHECK (seconds[1] < 2.0);
+}

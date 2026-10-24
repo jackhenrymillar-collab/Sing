@@ -28,8 +28,9 @@ namespace sing
 // to frame, with a small random nudge, so a clear vowel stays steady. Locked harmonics add
 // in amplitude across the overlapping frames, and noise adds in power; Hann at 4x overlap
 // keeps both constant (its values sum to 2 and its squares to 1.5).
-// 3. Move the read position on by a hop times the speed. Hold stops it, and the
-//    random phases keep the held sound alive.
+// 3. Move the read position on by a hop times the speed. Hold stops it (freeze), and the
+//    random phases keep the held sound alive. While an onset (a transient found in the
+//    analysis) is inside the window, the position moves at the recorded speed instead.
 //
 // Spread copies cost a pass over the bins each, not an FFT: every note runs two inverse FFTs
 // per frame however many copies there are.
@@ -59,6 +60,7 @@ public:
         bool hold = false;
         float formantRatio = 1.0f;      // >1 moves the vowel up; 1 keeps the recorded vowel
         float width = 0.5f;             // 0: left and right share phases; 1: independent phases
+        float onsets = 1.0f;            // 0: stretch transients like everything else; 1: pass them at the recorded speed
         int numLayers = 1;
         std::array<Layer, maxLayers> layers {};
     };

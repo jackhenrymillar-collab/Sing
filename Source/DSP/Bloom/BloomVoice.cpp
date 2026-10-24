@@ -282,6 +282,27 @@ void BloomVoice::beginFrame() noexcept
     // Then move the read position on for the frame after this one.
     buildFramePosition = readPosition;
     buildFrameAdvance = params.hold ? 0.0 : (double) hop * (voiceRate / hostRate) * std::max (0.0f, params.speed);
+
+    // Onsets: while a transient is inside the window, move at the recorded speed (or the
+    // set speed, if faster), so it passes as it was played instead of smearing over seconds.
+    if (! params.hold && params.onsets > 0.0f && params.speed < 1.0f)
+    {
+        const double realTime = (double) hop * (voiceRate / hostRate);
+        const double half = 0.5 * (double) size * voiceRate / hostRate;
+        float strength = 0.0f;
+        for (const auto& o : analysis->onsets())
+        {
+            double d = std::fmod (o.position - readPosition, length);
+            if (d < 0.0)
+                d += length;
+            if (d > length * 0.5)
+                d -= length;   // the nearest way round the loop
+            if (d > -half && d <= half)
+                strength = std::max (strength, o.strength);
+        }
+        const float pull = std::min (1.0f, strength * params.onsets);
+        buildFrameAdvance += (realTime - buildFrameAdvance) * (double) pull;
+    }
     readPosition = std::fmod (readPosition + buildFrameAdvance, length);
 }
 

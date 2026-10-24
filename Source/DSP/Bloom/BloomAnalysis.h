@@ -52,6 +52,22 @@ public:
     // for the classic method: every bin is noPeak and gets a random phase.
     bool locksHarmonics() const noexcept { return locked; }
 
+    // Onsets: sudden rises in the sound (a consonant, a breath in, a hit), found with short
+    // frames, as positions in the play buffer and strengths from 0 to 1. Bloom moves through
+    // these at the recorded speed instead of stretching them, so a transient stays a moment
+    // rather than smearing into everything around it. Sorted by position.
+    struct Onset
+    {
+        double position = 0.0;
+        float strength = 0.0f;
+    };
+    const std::vector<Onset>& onsets() const noexcept { return onsetList; }
+
+    // Finds onsets in a buffer by spectral flux: how much louder each of 24 bands has become
+    // since the last short frame, peaks of that standing well over its local median. Reads
+    // round the buffer, as a loop.
+    static std::vector<Onset> findOnsets (const LoopSource& source);
+
     // Decodes a fine-structure value.
     static float decode (uint16_t code) noexcept { return decodeTable()[code]; }
 
@@ -68,6 +84,7 @@ private:
     std::vector<uint16_t> fineData;
     std::vector<float> envData;
     std::vector<int16_t> peakData;
+    std::vector<Onset> onsetList;
 };
 
 } // namespace sing
