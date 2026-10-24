@@ -253,6 +253,23 @@ double SingVoice::playPosition() const noexcept
     return copies[0].running ? copies[0].engine.playPosition() : 0.0;
 }
 
+int SingVoice::getCopyLights (CopyLight* lights, int maxCount) const noexcept
+{
+    if (! active)
+        return 0;
+
+    int n = 0;
+    for (int i = 0; i < maxCopies && n < maxCount; ++i)
+    {
+        const auto& c = copies[(size_t) i];
+        const auto shape = copyShape (i, voiceSettings.spread);
+        if (! c.running || shape.weight <= 0.0f)
+            continue;
+        lights[n++] = { c.engine.playPosition(), shape.weight, shape.pan, pitchRatio (i), 0.0f };
+    }
+    return n;
+}
+
 void SingVoice::render (float* left, float* right, int numSamples) noexcept
 {
     int done = 0;

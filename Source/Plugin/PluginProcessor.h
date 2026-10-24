@@ -57,10 +57,18 @@ public:
     void setVoice (VoiceData::Ptr);
     bool loadVoiceFile (const juce::File&, juce::String& error);
 
-    // Where the sounding notes are in the voice, as 0 to 1 across the trimmed waveform, for the
-    // play lights. Newest first; a negative position means no note.
-    static constexpr int maxLights = 4;
-    struct Light { float position = -1.0f, level = 0.0f; };
+    // Where the sounding notes are in the voice, for the play lights: one light per Spread copy
+    // of the newest maxLightNotes notes, newest note first and its centre copy first. position
+    // is 0 to 1 across the trimmed waveform; note is -1 for an unused light.
+    static constexpr int maxLightNotes = 4;
+    static constexpr int maxLights = maxLightNotes * SingVoice::maxCopies;
+    struct Light
+    {
+        float position = -1.0f, level = 0.0f, weight = 0.0f, pan = 0.0f, pitchRatio = 1.0f;
+        float zone = 0.0f;   // read zone width, 0 to 1 of the waveform; 0 for the granular zone
+        int note = -1, copy = 0;
+        uint32_t noteId = 0;
+    };
     std::array<Light, maxLights> getLights() const noexcept;
 
     // The panel's size, remembered with the session.
@@ -88,7 +96,15 @@ private:
     std::atomic<bool> rootPitched { true };
     std::atomic<bool> panicPending { false };
 
-    std::array<std::atomic<float>, maxLights> lightPositions, lightLevels;
+    // Written at the end of each block, read by the panel at 30 fps. A light can tear between
+    // fields for one frame, which can't be seen.
+    struct SharedLight
+    {
+        std::atomic<float> position { -1.0f }, level { 0.0f }, weight { 0.0f }, pan { 0.0f }, pitchRatio { 1.0f }, zone { 0.0f };
+        std::atomic<int> note { -1 }, copy { 0 };
+        std::atomic<uint32_t> noteId { 0 };
+    };
+    std::array<SharedLight, maxLights> lights;
 
     // Cached raw parameter pointers: lock-free reads on the audio thread.
     std::atomic<float>* attack = nullptr;

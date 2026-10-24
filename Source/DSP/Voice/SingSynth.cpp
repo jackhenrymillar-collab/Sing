@@ -209,4 +209,30 @@ int SingSynth::getPlayPositions (double* positions, float* levels, int maxCount)
     return count;
 }
 
+int SingSynth::getPlayLights (PlayLight* lights, int maxNotes, int maxCount) const noexcept
+{
+    std::array<const SingVoice*, (size_t) voicePool> order {};
+    int n = 0;
+    for (const auto& v : voices)
+        if (v.isActive())
+            order[(size_t) n++] = &v;
+    std::sort (order.begin(), order.begin() + n,
+               [] (const SingVoice* a, const SingVoice* b) { return a->getStartOrder() > b->getStartOrder(); });
+
+    int count = 0;
+    for (int note = 0; note < std::min (n, maxNotes) && count < maxCount; ++note)
+    {
+        const auto& v = *order[(size_t) note];
+        std::array<SingVoice::CopyLight, (size_t) SingVoice::maxCopies> copies {};
+        const int k = v.getCopyLights (copies.data(), SingVoice::maxCopies);
+        for (int c = 0; c < k && count < maxCount; ++c)
+        {
+            const auto& cl = copies[(size_t) c];
+            lights[count++] = { cl.position, v.getLevel(), cl.weight, cl.pan, cl.pitchRatio, cl.zoneSamples, note, c,
+                                (uint32_t) v.getStartOrder() };
+        }
+    }
+    return count;
+}
+
 } // namespace sing
