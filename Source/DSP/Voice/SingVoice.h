@@ -19,6 +19,9 @@ struct VoiceSettings
     float stretch = 0.6f;            // the Stretch knob, 0 to 1
     float spread = 0.3f;             // the Spread knob, 0 to 1
     float formantSemitones = 0.0f;   // -12 to +12; 0 keeps the recorded vowel on every key
+    // On: the vowel stays as recorded on every key (formant-preserving pitch shift). Off:
+    // plain pitch shifting, so the vowel moves with the key (higher keys sound smaller).
+    bool keepVowel = true;
     bool hold = false;
     float glideSeconds = 0.0f;
     float pitchBendSemitones = 0.0f;
@@ -29,7 +32,7 @@ struct VoiceSettings
     float tone = 0.0f;               // Tone: -1 breath and noise only, 0 as recorded, +1 harmonics only
 
     // The voice's root pitch. Unpitched voices (breaths) still map keys from rootHz, but the
-    // formant shifter uses short fixed grains instead of following the period.
+    // formant shifter uses short frames and a fixed envelope width instead of the period.
     float rootHz = 261.63f;
     bool pitched = true;
 
@@ -65,7 +68,7 @@ private:
 };
 
 // One playing key. In granular mode, up to seven Spread copies, each a granular Stretch
-// engine followed by a formant shifter, panned across the stereo field. In Bloom mode, one
+// engine, panned across the stereo field, then one formant shifter on their mix. In Bloom mode, one
 // BloomVoice that builds all the copies in one spectrum. Either is mixed under the envelope.
 class SingVoice
 {
@@ -121,11 +124,15 @@ private:
     struct Copy
     {
         GranularEngine engine;
-        FormantShifter shifter;
         bool running = false;
         float gain = 0.0f;   // smoothed share of the mix
         std::vector<float> left, right;
     };
+    // One formant shifter for the whole note, after the Spread copies are mixed: the copies
+    // share the note's formant setting, so they don't each need one.
+    FormantShifter shifter;
+    void primeShifter() noexcept;
+
 
     void renderSubBlock (float* left, float* right, int numSamples) noexcept;
     void applyEnvelope (float* left, float* right, int numSamples) noexcept;

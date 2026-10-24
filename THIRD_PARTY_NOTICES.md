@@ -49,9 +49,9 @@ from any implementation.
 - Granular overlap-add time stretching with Hann windows.
 - Pitch detection: A. de Cheveigne and H. Kawahara, "YIN, a fundamental frequency estimator for
   speech and music", JASA 111(4), 2002.
-- Formant shifting: E. Moulines and F. Charpentier, "Pitch-synchronous waveform processing
-  techniques for text-to-speech synthesis using diphones", Speech Communication 9, 1990
-  (TD-PSOLA).
+- Formant shifting: spectral envelope shifting after A. Röbel and X. Rodet, "Efficient
+  spectral envelope estimation and its application to pitch shifting and envelope
+  preservation", DAFx 2005 (envelope through the harmonic peaks, reapplied after moving it).
 - Bloom: spectral time stretching with randomised phases, after Paul Nasca's published
   description of his "extreme time stretch" method. Written from the description only (his
   implementations are GPL and were not read). With the optional locked harmonics, peaks are kept phase-locked frame to

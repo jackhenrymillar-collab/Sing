@@ -6,204 +6,224 @@
 namespace sing
 {
 
-FormantShifter::FormantShifter()
+namespace
 {
-    // Hann window over two periods: 0 at u = -1, 1 at u = 0, 0 at u = +1.
-    window.resize ((size_t) windowSize + 1);
-    for (int i = 0; i <= windowSize; ++i)
-        window[(size_t) i] = (float) (0.5 - 0.5 * std::cos (6.28318530717958647692 * (double) i / (double) windowSize));
-}
+constexpr double pi = 3.14159265358979323846;
+constexpr float maxGain = 16.0f;   // +-24 dB: no bin is pushed further than this
+} // namespace
 
 void FormantShifter::prepare (double sampleRate, float maxPeriodSeconds)
 {
     rate = sampleRate > 0.0 ? sampleRate : 48000.0;
-    maxPeriod = std::max (32.0f, maxPeriodSeconds * (float) rate);
-    dcCoeff = (float) std::exp (-2.0 * 3.14159265358979 * 20.0 / rate);
 
-    // Grains read back as far as about 4.5 periods before now.
-    const int needed = (int) std::ceil (maxPeriod * 8.0f) + 64;
-    ringSize = 1;
-    while (ringSize < needed)
-        ringSize <<= 1;
-    ringMask = ringSize - 1;
-    ringL.assign ((size_t) ringSize, 0.0f);
-    ringR.assign ((size_t) ringSize, 0.0f);
+    // Frames of at least four periods of the lowest pitch, and about 21 ms at the least.
+    const double scale = rate / 48000.0;
+    minSize = 1024;
+    while ((double) minSize < 1024.0 * scale * 0.75)
+        minSize *= 2;
+    maxSize = minSize;
+    while ((double) maxSize < 4.0 * maxPeriodSeconds * rate && maxSize < 16384)
+        maxSize *= 2;
+
+    ffts.clear();
+    for (int s = minSize; s <= maxSize; s *= 2)
+        ffts.emplace_back (s);
+
+    const auto n = (size_t) maxSize;
+    for (auto* v : { &inL, &inR, &outL, &outR, &accL, &accR, &frame, &window })
+        v->assign (n, 0.0f);
+    specL.assign (n + 2, 0.0f);
+    specR.assign (n + 2, 0.0f);
+    const size_t bins = n / 2 + 1;
+    for (auto* v : { &power, &envelope, &logUpper, &gains })
+        v->assign (bins, 0.0f);
+    prefix.assign (bins + 1, 0.0);
+    queue.assign (bins, 0);
     start (0.0f, 1.0f);
 }
 
-float FormantShifter::periodFor (float requested) const noexcept
+int FormantShifter::start (float periodSamples, float r) noexcept
 {
-    const float p = requested >= 2.0f ? requested : unpitchedGrainSeconds * (float) rate;
-    return std::clamp (p, 16.0f, maxPeriod);
-}
+    setPeriod (periodSamples);
+    setRatio (r);
 
-int FormantShifter::start (float periodSamples, float ratio) noexcept
-{
-    period = periodFor (periodSamples);
-    setRatio (ratio);
+    // The frame: the power of two that holds four periods (unpitched: the shortest).
+    size = minSize;
+    if (period >= 2.0f)
+        while (size < maxSize && (float) size < 4.0f * period)
+            size *= 2;
+    hop = size / 4;
+    fft = &ffts[(size_t) std::lround (std::log2 ((double) size / minSize))];
 
-    // A grain read at ratio r reaches period * |r - 1| ahead of its centre. Leave room for
-    // the widest ratio, and for the period growing by half again under a bend or glide.
-    delay = std::min ((int) std::ceil (std::min (maxPeriod, period * 1.5f) * (maxRatio - 1.0f)) + 4,
-                      (int) maxPeriod + 4);
+    // Hann, scaled so analysis times synthesis window overlap-adds to exactly one at 4x.
+    const float norm = 1.0f / std::sqrt (1.5f);
+    for (int i = 0; i < size; ++i)
+        window[(size_t) i] = norm * (float) (0.5 - 0.5 * std::cos (2.0 * pi * i / size));
 
-    std::fill (ringL.begin(), ringL.end(), 0.0f);
-    std::fill (ringR.begin(), ringR.end(), 0.0f);
-    dcInL = dcOutL = dcInR = dcOutR = 0.0f;
-    for (auto& g : grains)
-        g.active = false;
-    now = 0;
-    nextCentre = 0.0;
-    return delay;
+    for (auto* v : { &inL, &inR, &outL, &outR, &accL, &accR })
+        std::fill (v->begin(), v->end(), 0.0f);
+    // Each note runs its frames at its own point in the hop, so a chord's FFTs don't all land
+    // in the same audio block. The latency is the same wherever the frames fall.
+    static unsigned int notes = 0;
+    const auto turn = (unsigned int) (++notes * 2654435761u) >> 8;
+    rover = size - hop + (int) ((unsigned long long) turn * (unsigned) hop >> 24);
+    return latency();
 }
 
 void FormantShifter::setPeriod (float periodSamples) noexcept
 {
-    period = periodFor (periodSamples);
+    period = periodSamples >= 2.0f ? periodSamples : 0.0f;
 }
 
-void FormantShifter::setRatio (float ratio) noexcept
+void FormantShifter::setRatio (float r) noexcept
 {
     // Within 5 cents of no change, make no change: the shifter then passes the sound
-    // through untouched instead of re-cutting it into grains.
-    targetRatio = std::abs (ratio - 1.0f) < 0.003f ? 1.0f : std::clamp (ratio, minRatio, maxRatio);
+    // through untouched.
+    ratio = std::abs (r - 1.0f) < 0.003f ? 1.0f : std::clamp (r, minRatio, maxRatio);
 }
 
-void FormantShifter::scheduleGrains() noexcept
+void FormantShifter::process (const float* xL, const float* xR, float* yL, float* yR, int numSamples) noexcept
 {
-    // Grains are centred one period apart. Each spans a period either side, so at any moment
-    // two overlap and their Hann windows sum to one.
-    while (nextCentre - (double) period <= (double) now)
+    stereo = xR != nullptr && yR != nullptr;
+    const int lag = size - hop;
+    for (int s = 0; s < numSamples; ++s)
     {
-        auto it = std::find_if (grains.begin(), grains.end(), [] (const Grain& g) { return ! g.active; });
-        if (it == grains.end())
-            return;
-
-        it->active = true;
-        it->centre = nextCentre;
-        it->halfLength = period;
-        it->ratio = targetRatio;
-        nextCentre += (double) period;
+        inL[(size_t) rover] = xL[s];
+        inR[(size_t) rover] = stereo ? xR[s] : 0.0f;
+        yL[s] = outL[(size_t) (rover - lag)];
+        if (stereo)
+            yR[s] = outR[(size_t) (rover - lag)];
+        if (++rover >= size)
+        {
+            processFrame();
+            rover = lag;
+        }
     }
 }
 
-float FormantShifter::read (const std::vector<float>& ring, double t) const noexcept
+void FormantShifter::processFrame() noexcept
 {
-    // 4-point Hermite interpolation, as in the granular engine.
-    const double fl = std::floor (t);
-    const long long i = (long long) fl;
-    const float f = (float) (t - fl);
-    const float xm1 = ring[(size_t) ((i - 1) & ringMask)];
-    const float x0 = ring[(size_t) (i & ringMask)];
-    const float x1 = ring[(size_t) ((i + 1) & ringMask)];
-    const float x2 = ring[(size_t) ((i + 2) & ringMask)];
-    const float c = 0.5f * (x1 - xm1);
-    const float v = x0 - x1;
-    const float w = c + v;
-    const float a = w + v + 0.5f * (x2 - x0);
-    const float b = w + a;
-    return ((a * f - b) * f + c) * f + x0;
+    const int n = size, bins = size / 2 + 1;
+    const float* w = window.data();
+
+    if (ratio == 1.0f)
+    {
+        // Nothing to reshape: the windows alone, which overlap-add back to the input.
+        for (int i = 0; i < n; ++i)
+        {
+            const float ww = w[i] * w[i];
+            accL[(size_t) i] += inL[(size_t) i] * ww;
+            accR[(size_t) i] += inR[(size_t) i] * ww;
+        }
+    }
+    else
+    {
+        // A centred note has the same left and right: one FFT does for both.
+        const bool twoChannels = stereo && ! std::equal (inL.begin(), inL.begin() + n, inR.begin());
+        for (int i = 0; i < n; ++i)
+            frame[(size_t) i] = inL[(size_t) i] * w[i];
+        fft->forward (frame.data(), specL.data());
+        if (twoChannels)
+        {
+            for (int i = 0; i < n; ++i)
+                frame[(size_t) i] = inR[(size_t) i] * w[i];
+            fft->forward (frame.data(), specR.data());
+        }
+        for (int k = 0; k < bins; ++k)
+        {
+            float p = specL[(size_t) (2 * k)] * specL[(size_t) (2 * k)] + specL[(size_t) (2 * k + 1)] * specL[(size_t) (2 * k + 1)];
+            if (twoChannels)
+                p += specR[(size_t) (2 * k)] * specR[(size_t) (2 * k)] + specR[(size_t) (2 * k + 1)] * specR[(size_t) (2 * k + 1)];
+            power[(size_t) k] = p;
+        }
+        traceEnvelope();
+
+        // New envelope over old, bin by bin: the envelope read at frequency / ratio.
+        const float inv = 1.0f / ratio;
+        gains[0] = 1.0f;
+        for (int k = 1; k < bins; ++k)
+        {
+            const float at = (float) k * inv;
+            const int k0 = std::min ((int) at, bins - 1), k1 = std::min (k0 + 1, bins - 1);
+            const float t = at - (float) k0;
+            const float moved = envelope[(size_t) k0] + t * (envelope[(size_t) k1] - envelope[(size_t) k0]);
+            gains[(size_t) k] = std::clamp (moved / envelope[(size_t) k], 1.0f / maxGain, maxGain);
+        }
+        for (int k = 0; k < bins; ++k)
+        {
+            const float g = gains[(size_t) k];
+            specL[(size_t) (2 * k)] *= g;
+            specL[(size_t) (2 * k + 1)] *= g;
+            specR[(size_t) (2 * k)] *= g;
+            specR[(size_t) (2 * k + 1)] *= g;
+        }
+
+        fft->inverse (specL.data(), frame.data());
+        for (int i = 0; i < n; ++i)
+            accL[(size_t) i] += frame[(size_t) i] * w[i];
+        if (twoChannels)
+        {
+            fft->inverse (specR.data(), frame.data());
+            for (int i = 0; i < n; ++i)
+                accR[(size_t) i] += frame[(size_t) i] * w[i];
+        }
+        else if (stereo)
+        {
+            for (int i = 0; i < n; ++i)
+                accR[(size_t) i] += frame[(size_t) i] * w[i];
+        }
+    }
+
+    // The first hop is finished: hand it out, and move everything on by a hop.
+    std::copy_n (accL.begin(), hop, outL.begin());
+    std::copy_n (accR.begin(), hop, outR.begin());
+    std::copy (accL.begin() + hop, accL.begin() + n, accL.begin());
+    std::copy (accR.begin() + hop, accR.begin() + n, accR.begin());
+    std::fill (accL.begin() + (n - hop), accL.begin() + n, 0.0f);
+    std::fill (accR.begin() + (n - hop), accR.begin() + n, 0.0f);
+    std::copy (inL.begin() + hop, inL.begin() + n, inL.begin());
+    std::copy (inR.begin() + hop, inR.begin() + n, inR.begin());
 }
 
-void FormantShifter::process (const float* inL, const float* inR, float* outL, float* outR, int numSamples) noexcept
+void FormantShifter::traceEnvelope() noexcept
 {
-    const bool stereo = inR != nullptr && outR != nullptr;
-    const double halfWindow = (double) (windowSize / 2);
+    // The envelope through the tops of the harmonics: a running maximum over about one and a
+    // half harmonics (so it never sinks between them), then a moving average of its log to
+    // round it off. Unpitched sound uses a fixed 200 Hz.
+    const int bins = size / 2 + 1;
+    const double binHz = rate / size;
+    const double f0 = period >= 2.0f ? rate / period : 200.0;
+    const int half = std::max (1, (int) std::lround (0.75 * f0 / binHz));
 
-    int done = 0;
-    while (done < numSamples)
+    float loudest = 0.0f;
+    for (int k = 0; k < bins; ++k)
     {
-        scheduleGrains();
+        power[(size_t) k] = std::sqrt (power[(size_t) k]);   // magnitude now
+        loudest = std::max (loudest, power[(size_t) k]);
+    }
+    const float floor = std::max (loudest * 1.0e-4f, 1.0e-12f);
 
-        // Work in stretches where the set of sounding grains doesn't change: up to the next
-        // grain start or the first grain end.
-        long long segmentEnd = now + (numSamples - done);
-        segmentEnd = std::min (segmentEnd, (long long) std::ceil (nextCentre - (double) period));
-        bool allUnity = true;
-        for (const auto& g : grains)
-            if (g.active)
-            {
-                segmentEnd = std::min (segmentEnd, (long long) std::ceil (g.centre + (double) g.halfLength));
-                allUnity &= g.ratio == 1.0f;
-            }
-        const int len = (int) std::max (1LL, segmentEnd - now);
-
-        // The input goes into the ring first; in and out may be the same buffers.
-        for (int s = 0; s < len; ++s)
+    int head = 0, tail = 0, next = 0;
+    for (int k = 0; k < bins; ++k)
+    {
+        const int hi = std::min (bins - 1, k + half);
+        for (; next <= hi; ++next)
         {
-            ringL[(size_t) ((now + s) & ringMask)] = inL[done + s];
-            ringR[(size_t) ((now + s) & ringMask)] = stereo ? inR[done + s] : 0.0f;
+            while (tail > head && power[(size_t) queue[(size_t) tail - 1]] <= power[(size_t) next])
+                --tail;
+            queue[(size_t) tail++] = next;
         }
-
-        float* yL = outL + done;
-        float* yR = stereo ? outR + done : nullptr;
-
-        if (allUnity)
-        {
-            // At ratio 1 every grain reads the input in step and the windows sum to one, so
-            // the output is the input, delay samples late.
-            for (int s = 0; s < len; ++s)
-            {
-                const long long src = now + s - delay;
-                yL[s] = src >= 0 ? ringL[(size_t) (src & ringMask)] : 0.0f;
-                if (stereo)
-                    yR[s] = src >= 0 ? ringR[(size_t) (src & ringMask)] : 0.0f;
-            }
-        }
-        else
-        {
-            std::fill_n (yL, len, 0.0f);
-            if (stereo)
-                std::fill_n (yR, len, 0.0f);
-
-            for (const auto& g : grains)
-            {
-                if (! g.active)
-                    continue;
-
-                const double t0 = (double) now;
-                const double offset0 = t0 - g.centre;
-                double wp = (offset0 / (double) g.halfLength + 1.0) * halfWindow;
-                const double wStep = halfWindow / (double) g.halfLength;
-                double src = g.centre - (double) delay + offset0 * (double) g.ratio;
-                const double ratio = (double) g.ratio;
-
-                for (int s = 0; s < len; ++s, wp += wStep, src += ratio)
-                {
-                    if (wp < 0.0)
-                        continue;
-                    const int wi = std::min ((int) wp, windowSize - 1);
-                    const float w = window[(size_t) wi] + (float) (wp - (double) wi) * (window[(size_t) wi + 1] - window[(size_t) wi]);
-                    const double t = t0 + (double) s;
-                    // Never read past what has arrived, or further back than the ring holds.
-                    const double at = std::clamp (src, t - (double) ringSize + 4.0, t - 2.0);
-                    yL[s] += w * read (ringL, at);
-                    if (stereo)
-                        yR[s] += w * read (ringR, at);
-                }
-            }
-        }
-
-        for (int s = 0; s < len; ++s)
-        {
-            const float xl = yL[s];
-            dcOutL = xl - dcInL + dcCoeff * dcOutL;
-            dcInL = xl;
-            yL[s] = dcOutL;
-            if (stereo)
-            {
-                const float xr = yR[s];
-                dcOutR = xr - dcInR + dcCoeff * dcOutR;
-                dcInR = xr;
-                yR[s] = dcOutR;
-            }
-        }
-
-        now += len;
-        done += len;
-        for (auto& g : grains)
-            if (g.active && (double) now >= g.centre + (double) g.halfLength)
-                g.active = false;
+        while (queue[(size_t) head] < k - half)
+            ++head;
+        logUpper[(size_t) k] = std::log (power[(size_t) queue[(size_t) head]] + floor);
+    }
+    prefix[0] = 0.0;
+    for (int k = 0; k < bins; ++k)
+        prefix[(size_t) k + 1] = prefix[(size_t) k] + logUpper[(size_t) k];
+    for (int k = 0; k < bins; ++k)
+    {
+        const int lo = std::max (0, k - half), hi = std::min (bins, k + half + 1);
+        envelope[(size_t) k] = std::exp ((float) ((prefix[(size_t) hi] - prefix[(size_t) lo]) / (hi - lo)));
     }
 }
 

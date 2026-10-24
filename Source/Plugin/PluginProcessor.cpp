@@ -1,4 +1,6 @@
 #include "PluginProcessor.h"
+
+#include <cmath>
 #include "PluginEditor.h"
 
 namespace sing
@@ -34,6 +36,7 @@ SingProcessor::SingProcessor()
     shiftHz = state.getRawParameterValue (ParamID::shift);
     smear = state.getRawParameterValue (ParamID::smear);
     tone = state.getRawParameterValue (ParamID::tone);
+    keepVowel = state.getRawParameterValue (ParamID::keepVowel);
     bypassParam = state.getParameter (ParamID::bypass);
 
     for (auto* id : kLoopIds)
@@ -235,6 +238,7 @@ SynthSettings SingProcessor::readSettings() const noexcept
     s.voice.shiftHz = shiftHz->load();
     s.voice.smear = smear->load() * 0.01f;
     s.voice.tone = tone->load() * 0.01f;
+    s.voice.keepVowel = keepVowel->load() > 0.5f;
     s.voice.rootHz = rootHz.load();
     s.voice.pitched = rootPitched.load();
     s.polyphony = juce::roundToInt (voices->load());
@@ -315,6 +319,26 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         handleMidi (meta.getMessage());
     }
     renderTo (rendered, numSamples);
+
+    // A bad sample (NaN or infinity) would stick in Air's filters and Space's reverb and
+    // silence them for good. None should ever reach here; if one does, drop it and clear
+    // the effects so they recover at once.
+    {
+        bool bad = false;
+        for (auto* ch : { left, right })
+            if (ch != nullptr)
+                for (int i = 0; i < numSamples; ++i)
+                    if (! std::isfinite (ch[i]))
+                    {
+                        ch[i] = 0.0f;
+                        bad = true;
+                    }
+        if (bad)
+        {
+            air.reset();
+            space.reset();
+        }
+    }
 
     // Air, then Space: the reverb hears the lifted top and the breath.
     air.setAmount (airAmount->load() * 0.01f);

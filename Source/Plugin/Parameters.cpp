@@ -110,6 +110,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::smear, v }, "Smear", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatPercent)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::window, v }, "Window", skewed (0.1f, 1.4f, 0.68f), 0.68f, withText (formatSeconds)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::tone, v }, "Tone", Range { -100.0f, 100.0f, 1.0f }, 0.0f, withText (formatTone)));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::keepVowel, v }, "Keep Vowel", true));
     // Also the host's bypass switch (see SingProcessor::getBypassParameter). Clicking the evening star toggles it.
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::bypass, v }, "Bypass", false));
 

@@ -535,3 +535,44 @@ TEST_CASE ("Bloom: the Window setting sets the analysis length")
     CHECK (sizes[1] == 32768);
     CHECK (sizes[2] == 65536);
 }
+
+TEST_CASE ("Bloom: swapping to a loop with fewer analysis frames mid-note stays clean")
+{
+    // A new Window (or loop length) gives the new loop a different number of frames. A
+    // frame being built when the loop is swapped used to read past the end of the new
+    // analysis, which could put garbage (and NaN) into Air and Space.
+    const auto v = makePlaceholderVoice (PlaceholderVowel::ah, sr, 4.0f);
+    auto build = [&v] (float window)
+    {
+        LoopSettings s;
+        s.start = 48000;
+        s.length = 2 * 48000;
+        s.fade = 14400;
+        s.pitchPeriod = (float) (sr / v.rootHz);
+        s.analyseForBloom = true;
+        s.bloomWindowSeconds = window;
+        const float* ch[] = { v.samples.data() };
+        return LoopSource::build (ch, 1, (int) v.samples.size(), sr, s);
+    };
+    auto many = build (0.1f), few = build (1.4f);
+    REQUIRE (static_cast<const BloomAnalysis*> (many->analysis (StretchMode::bloom))->numFrames()
+             > static_cast<const BloomAnalysis*> (few->analysis (StretchMode::bloom))->numFrames());
+
+    SingSynth synth;
+    synth.prepare (sr, 256);
+    synth.setSource (many.get());
+    auto settings = bloomSynth (0.3f);
+    settings.voice.rootHz = v.rootHz;
+    synth.setSettings (settings);
+    synth.noteOn (55, 1.0f);
+    const auto before = render (synth, 3 * 48000 + 77);   // somewhere late in the loop
+    synth.setSource (few.get());
+    const auto after = render (synth, 2 * 48000);
+    CHECK (allFinite (before));
+    CHECK (allFinite (after));
+    float peak = 0.0f;
+    for (const float x : after.left)
+        peak = std::max (peak, std::abs (x));
+    CHECK (peak < 4.0f);
+    CHECK (rms (after.left.data() + 48000, 48000) > 0.01);
+}

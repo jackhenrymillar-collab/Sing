@@ -98,11 +98,11 @@ void SingVoice::prepare (double sampleRate, int maxBlockSize)
     for (auto& c : copies)
     {
         c.engine.prepare (hostRate, subBlock);
-        c.shifter.prepare (hostRate, 0.04f);
         c.left.assign ((size_t) subBlock, 0.0f);
         c.right.assign ((size_t) subBlock, 0.0f);
         c.running = false;
     }
+    shifter.prepare (hostRate, 0.04f);
     bloom.prepare (hostRate);
     envelopeGains.assign ((size_t) subBlock, 0.0f);
     mixLeft.assign ((size_t) subBlock, 0.0f);
@@ -128,6 +128,8 @@ float SingVoice::formantRatioNow() const noexcept
     // pitch. Undo that, so Formant 0 keeps the recorded vowel on every key, then add the
     // Formant setting. The shifter covers an octave either way; beyond that the vowel starts
     // to follow the pitch.
+    if (! voiceSettings.keepVowel)
+        return std::exp2 (voiceSettings.formantSemitones / 12.0f);
     return std::exp2 ((voiceSettings.formantSemitones - semitones) / 12.0f);
 }
 
@@ -176,6 +178,7 @@ void SingVoice::start (const LoopSource& src, int midiNote, float velocity, cons
     for (int i = 0; i < maxCopies; ++i)
         if (copyShape (i, settings.spread).weight > 0.0f)
             startCopy (i);
+    primeShifter();
 }
 
 void SingVoice::startCopy (int index) noexcept
@@ -189,23 +192,46 @@ void SingVoice::startCopy (int index) noexcept
     const double offset = (double) index * copyOffsetSeconds * source->sampleRate();
     c.engine.start (*source, std::fmod (offset, (double) source->size()));
 
-    const float formantRatio = formantRatioNow();
-    int prime = c.shifter.start (periodFor (c.engine, ratio), formantRatio);
+    c.running = true;
+    c.gain = 0.0f;   // fades in over the first sub-block
+}
 
+void SingVoice::primeShifter() noexcept
+{
     // The shifter runs latency() samples behind its input. Feed it that much of the note up
-    // front, so its output starts exactly when the note does.
+    // front (the copies mixed, as renderSubBlock does at the start), so its output starts
+    // exactly when the note does.
+    int prime = shifter.start (periodFor (copies[0].engine, pitchRatio (0)), formantRatioNow());
+    std::array<CopyShape, (size_t) maxCopies> shapes {};
+    const float norm = copyShapes (voiceSettings.spread, shapes);
+    constexpr float halfPi = 1.57079632679f;
     while (prime > 0)
     {
         const int n = std::min (prime, subBlock);
-        std::fill_n (c.left.data(), n, 0.0f);
-        std::fill_n (c.right.data(), n, 0.0f);
-        c.engine.process (c.left.data(), c.right.data(), n);
-        c.shifter.process (c.left.data(), c.right.data(), c.left.data(), c.right.data(), n);
+        std::fill_n (mixLeft.data(), n, 0.0f);
+        std::fill_n (mixRight.data(), n, 0.0f);
+        for (int i = 0; i < maxCopies; ++i)
+        {
+            auto& c = copies[(size_t) i];
+            if (! c.running)
+                continue;
+            std::fill_n (c.left.data(), n, 0.0f);
+            std::fill_n (c.right.data(), n, 0.0f);
+            c.engine.process (c.left.data(), c.right.data(), n);
+            const auto& shape = shapes[(size_t) i];
+            const float g = shape.weight * norm;
+            const float theta = (shape.pan + 1.0f) * 0.5f * halfPi;
+            const float panL = std::cos (theta) * 1.41421356f * g, panR = std::sin (theta) * 1.41421356f * g;
+            for (int s = 0; s < n; ++s)
+            {
+                mixLeft[(size_t) s] += c.left[(size_t) s] * panL;
+                mixRight[(size_t) s] += c.right[(size_t) s] * panR;
+            }
+            c.gain = g;
+        }
+        shifter.process (mixLeft.data(), mixRight.data(), mixLeft.data(), mixRight.data(), n);
         prime -= n;
     }
-
-    c.running = true;
-    c.gain = 0.0f;   // fades in over the first sub-block
 }
 
 void SingVoice::release() noexcept
@@ -374,13 +400,10 @@ void SingVoice::renderSubBlock (float* left, float* right, int n) noexcept
         const float ratio = pitchRatio (i);
         c.engine.setSettings (granular);
         c.engine.setParameters ({ speed, ratio, voiceSettings.hold });
-        c.shifter.setPeriod (periodFor (c.engine, ratio));
-        c.shifter.setRatio (formantRatio);
 
         std::fill_n (c.left.data(), n, 0.0f);
         std::fill_n (c.right.data(), n, 0.0f);
         c.engine.process (c.left.data(), c.right.data(), n);
-        c.shifter.process (c.left.data(), c.right.data(), c.left.data(), c.right.data(), n);
 
         // Equal-power pan, unity in the centre. The copy's level ramps over the sub-block.
         const float theta = (shape.pan + 1.0f) * 0.5f * halfPi;
@@ -402,6 +425,10 @@ void SingVoice::renderSubBlock (float* left, float* right, int n) noexcept
             c.running = false;
         }
     }
+
+    shifter.setPeriod (periodFor (copies[0].engine, pitchRatio (0)));
+    shifter.setRatio (formantRatio);
+    shifter.process (mixLeft.data(), mixRight.data(), mixLeft.data(), mixRight.data(), n);
 
     applyEnvelope (left, right, n);
 }
@@ -439,7 +466,8 @@ BloomVoice::Parameters SingVoice::bloomParameters (const std::array<CopyShape, (
     p.hold = voiceSettings.hold;
     // Bloom moves the envelope separately from the pitch, so Formant 0 needs no
     // compensation to keep the recorded vowel on every key.
-    p.formantRatio = std::exp2 (voiceSettings.formantSemitones / 12.0f);
+    // With Keep vowel off, the envelope moves with the key, as plain resampling would.
+    p.formantRatio = std::exp2 ((voiceSettings.formantSemitones + (voiceSettings.keepVowel ? 0.0f : semitones)) / 12.0f);
     // Some width even at Spread 0, but little enough that the note holds up in mono.
     p.width = 0.3f + 0.7f * voiceSettings.spread;
     p.shiftHz = voiceSettings.shiftHz;

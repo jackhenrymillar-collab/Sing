@@ -17,7 +17,7 @@ Each preset carries its own voice (`VoiceData`). When a voice is loaded Sing:
 Sing also tracks the pitch over time (YIN every 20 ms, with a median of five frames against
 octave slips), because many voices move between notes. The root only decides which key plays
 the voice at its recorded pitch. Everything that works pitch by pitch (grains placed in phase,
-the formant shifter's grains) follows the note actually sounding where it reads. Using the root
+the formant shifter's envelope width) follows the note actually sounding where it reads. Using the root
 there instead lays a second, wrong set of harmonics over any part of the voice that sings a
 different note, which sounds like a resonance.
 
@@ -69,41 +69,58 @@ Each copy has its own grain engine.
 
 ## Formant
 
-Formant changes the vowel size (throat size) without changing pitch. It uses TD-PSOLA
-(Moulines and Charpentier, 1990):
+Formant changes the vowel size (throat size) without changing pitch. It is a spectral
+envelope shifter, in the style of Röbel and Rodet (DAFx 2005), and it keeps the pitch and the
+vowel apart:
 
-- Grains are two pitch periods long, one period apart, Hann windowed. The period is the one
-  the pitch track measured where the note is reading.
-- Each grain is read at the formant ratio and placed back at the original spacing, so the
-  pitch stays and the spectral envelope moves.
-- Unpitched voices use 5 ms grains.
-- The shifter is primed at note start so its delay (about 1.5 periods) isn't heard.
-- Within 5 cents of no change it passes the sound straight through.
-- A 20 Hz DC blocker follows it. A grain read at a ratio other than 1 no longer holds a whole
-  number of cycles under its window, so it carries a little DC, and grains laid a period apart
-  add that up to an offset (heard as a low thump).
+1. **Analysis.** Hann-windowed FFT frames, at least four pitch periods long (1024 samples at
+   48 kHz for most voices, 2048 for low ones), a new frame every quarter frame.
+2. **Separation.** Each frame's spectral envelope (the vowel: formants and timbre) is traced
+   through the tops of the harmonics: a running maximum over about one and a half harmonics,
+   then a smoothed log. Under it is the excitation: the harmonics and the breath.
+3. **Pitch.** The keys shift the pitch by reading the loop faster or slower, which moves the
+   envelope along with the harmonics.
+4. **Reshaping.** The shifter reads the envelope at frequency / ratio and multiplies each bin by
+   new envelope over old (at most 24 dB either way). Only magnitudes change, so the harmonics
+   keep their exact frequencies and phases: it adds no partials of its own (a test checks this
+   is more than 40 dB down on a steady vowel).
+5. **Reconstruction.** Inverse FFT, Hann again, overlap-add. At ratio 1 it is an exact delay.
+
+The shifter is primed at note start so its delay (one frame, about 21 ms) isn't heard. It runs
+once per note, after the Spread copies are mixed (they share the note's formant setting), and
+each note runs its frames at its own point in the hop so a chord's FFTs are spread out. A
+centred note (left equal to right) needs one FFT each way instead of two.
+
+The old shifter was TD-PSOLA (one-period grains, resampled). It only sounds clean when the
+grain spacing matches the voice's pitch exactly; vibrato, pitch-track error and the switch to
+5 ms grains on unpitched moments each put a buzz between the harmonics. On the "ah" voice a
+fifth and an octave up it measured 6 to 11 dB more power off the harmonics than plain
+resampling.
 
 **Formant 0 keeps the recorded vowel on every key.** Playing a sampler higher normally
 squeezes the formants too (the chipmunk effect). Sing undoes that: the shift ratio is
 2^((Formant - semitones from root) / 12), clamped to one octave each way. So at Formant 0 the
 voice sounds the same size across the keyboard, and the knob moves it from there.
 
-Formant runs on each Spread copy separately, so the copies keep their detune.
+**KEEP VOWEL** (parameter `keepvowel`, on by default) switches that off. Off, the keys do plain
+pitch shifting: the vowel moves with the key, so higher keys sound smaller and lower keys
+larger, and Formant moves it from there. With Formant at 0 the shifter then does nothing at
+all. In Bloom, Keep vowel off moves the envelope with the key too.
+
 
 ## CPU
 
-Measured on the cloud Linux build machine (-O2, 48 kHz, 128-sample blocks, Stretch 80%,
-Formant -3), not a Mac:
+Measured on the cloud Linux build machine (-O2, 48 kHz, 128-sample blocks, Stretch 60%, 16
+notes spread over the keyboard, Keep vowel on), not a Mac:
 
-| 8 notes        | One core |
-|----------------|----------|
-| Spread 0       | about 6% |
-| Spread 50%     | about 23% |
-| Spread 100%    | about 50% |
+| 16 notes    | One core | 99.9th percentile block (budget 2.67 ms) |
+|-------------|----------|------------------------------------------|
+| Spread 0    | about 13% | about 0.7 to 2.5 ms |
+| Spread 100% | about 26% | about 2.1 to 2.8 ms |
 
-Full Spread is seven engines and seven shifters per note, so it is the expensive case.
-Sharing grain reads between copies, and skipping the shifter when Formant compensation is
-near 1, are the next savings.
+Full Spread is seven grain engines per note, so it is the expensive case. With the old
+per-copy PSOLA shifter it was about 39% for the same 16 notes; one spectral shifter per note
+costs more at Spread 0 (it was about 7%) and less with Spread.
 
 ## Not built yet
 

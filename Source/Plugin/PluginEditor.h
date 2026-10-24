@@ -80,6 +80,7 @@ private:
 
     // Bottom row
     ui::PillToggle holdButton { "HOLD" };
+    ui::PillToggle keepVowelButton { "KEEP VOWEL" };
     std::array<std::unique_ptr<ui::PillToggle>, 2> engineButtons;
     std::unique_ptr<juce::ParameterAttachment> engineAttachment;
     bool bloomEngine = false;

@@ -29,6 +29,7 @@ namespace ParamID
     inline constexpr auto smear      = "smear";
     inline constexpr auto tone       = "tone";
     inline constexpr auto window     = "window";
+    inline constexpr auto keepVowel  = "keepvowel";
 }
 
 // The order matches LoopDirection.
