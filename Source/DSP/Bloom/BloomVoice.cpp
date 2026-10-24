@@ -9,7 +9,6 @@ namespace sing
 namespace
 {
 constexpr double pi = 3.14159265358979323846;
-constexpr double targetSeconds = 0.68;
 constexpr int minSize = 1024;
 constexpr int phasorBits = 12;
 constexpr int phasorCount = 1 << phasorBits;
@@ -77,7 +76,7 @@ int nearestPowerOfTwo (double samples, int lo, int hi) noexcept
 void BloomVoice::prepare (double hostSampleRate)
 {
     hostRate = hostSampleRate > 0.0 ? hostSampleRate : 48000.0;
-    maxSize = nearestPowerOfTwo (targetSeconds * hostRate * 1.5, minSize, 1 << 18);
+    maxSize = nearestPowerOfTwo (BloomAnalysis::maxWindowSeconds * hostRate, minSize, 1 << 18);
 
     for (int s = minSize; s <= maxSize; s *= 2)
         RealFFT::makeShared (s);
@@ -254,6 +253,8 @@ void BloomVoice::beginFrame() noexcept
         // Classic (unlocked) frames have no harmonics marked, so everything moves with the
         // pitch, as the method shifts the whole spectrum.
         f.noiseScale = analysis->locksHarmonics() && source->periodAt (at) >= 2.0f ? outBinHz / analysis->binHz() : f.binScale;
+        f.shiftBins = params.shiftHz / (pitch * analysis->binHz());
+        f.noiseShiftBins = f.noiseScale == f.binScale ? f.shiftBins : params.shiftHz / analysis->binHz();
         // Magnitudes are densities, so a frame of N bins needs sqrt(N) to hold the same
         // power. Breath and noise keep their level when the pitch moves, since the envelope
         // stays put.
@@ -282,6 +283,27 @@ void BloomVoice::beginFrame() noexcept
     // Then move the read position on for the frame after this one.
     buildFramePosition = readPosition;
     buildFrameAdvance = params.hold ? 0.0 : (double) hop * (voiceRate / hostRate) * std::max (0.0f, params.speed);
+
+    // Onsets: while a transient is inside the window, move at the recorded speed (or the
+    // set speed, if faster), so it passes as it was played instead of smearing over seconds.
+    if (! params.hold && params.onsets > 0.0f && params.speed < 1.0f)
+    {
+        const double realTime = (double) hop * (voiceRate / hostRate);
+        const double half = 0.5 * (double) size * voiceRate / hostRate;
+        float strength = 0.0f;
+        for (const auto& o : analysis->onsets())
+        {
+            double d = std::fmod (o.position - readPosition, length);
+            if (d < 0.0)
+                d += length;
+            if (d > length * 0.5)
+                d -= length;   // the nearest way round the loop
+            if (d > -half && d <= half)
+                strength = std::max (strength, o.strength);
+        }
+        const float pull = std::min (1.0f, strength * params.onsets);
+        buildFrameAdvance += (realTime - buildFrameAdvance) * (double) pull;
+    }
     readPosition = std::fmod (readPosition + buildFrameAdvance, length);
 }
 
@@ -296,6 +318,11 @@ void BloomVoice::buildBins (int from, int to) noexcept
     constexpr int phaseShift = 32 - phasorBits;
     constexpr uint32_t halfTurn = 0x80000000u;
     const auto shimmerRange = (uint32_t) (shimmer * 4294967296.0f);
+
+    const bool lockedMode = analysis->locksHarmonics();
+    const float tone = std::clamp (params.tone, -1.0f, 1.0f);
+    const float tonalWeight = std::min (1.0f, 1.0f + tone), noiseWeight = std::min (1.0f, 1.0f - tone);
+    const float blur = std::clamp (params.blur, 0.0f, 1.0f);
 
     float* sl = spectrumLeft.data();
     float* sr = spectrumRight.data();
@@ -340,7 +367,15 @@ void BloomVoice::buildBins (int from, int to) noexcept
             const float env = mixA * (envA[e0] + et * (envA[e0 + 1] - envA[e0])) + mixB * (envB[e0] + et * (envB[e0 + 1] - envB[e0]));
 
             // Harmonics follow the pitch: is there one where this bin reads, moved by it?
-            const float src = (float) k * f.binScale;
+            // Frequency spread: each bin reads from a random point nearby, a new one every
+            // frame, which smears the spectrum by up to 12 % (about two semitones) either way.
+            float jitter = 0.0f;
+            if (blur > 0.0f)
+                jitter = blur * ((float) nextRandom() * (2.0f / 4294967296.0f) - 1.0f);
+            float src = (float) k * f.binScale - f.shiftBins;
+            src += jitter * std::max (1.5f, 0.12f * src);
+            if (src < 1.0f)
+                continue;   // shifted below the bottom
             const int nearest = (int) (src + 0.5f);
             const int16_t code = nearest < bins - 1 ? peaks[nearest] : BloomAnalysis::noPeak;
             float fine = 0.0f;
@@ -350,7 +385,10 @@ void BloomVoice::buildBins (int from, int to) noexcept
             {
                 // Breath and noise: on a pitched voice they stay where they were recorded
                 // (they have no pitch to move), stepping round the harmonics there.
-                const float at = (float) k * f.noiseScale;
+                float at = (float) k * f.noiseScale - f.noiseShiftBins;
+                at += jitter * std::max (1.5f, 0.12f * at);
+                if (at < 1.0f)
+                    continue;
                 int b = (int) at;
                 if (b >= bins - 1)
                     continue;
@@ -372,8 +410,11 @@ void BloomVoice::buildBins (int from, int to) noexcept
             // vowel stays steady instead of trembling, and its neighbouring bins follow it
             // half a turn apart, as a windowed sine's do.
             uint32_t ph, offsetIndex;
-            float gain = f.amplitude;
-            if (code == BloomAnalysis::noPeak)
+            // Tone: harmonics against noise and breath.
+            float gain = f.amplitude * (code == BloomAnalysis::noPeak ? noiseWeight : tonalWeight);
+            if (gain <= 0.0f)
+                continue;
+            if (code == BloomAnalysis::noPeak || ! lockedMode)
             {
                 ph = nextRandom();
                 offsetIndex = (uint32_t) k;
@@ -396,7 +437,7 @@ void BloomVoice::buildBins (int from, int to) noexcept
                 // Harmonics stay in phase across the overlapping frames, so they add in
                 // amplitude (Hann at 4x overlap sums to 2) where noise adds in power (its
                 // squares sum to 1.5).
-                gain = f.tonalAmplitude;
+                gain = f.tonalAmplitude * tonalWeight;
             }
             phase[k] = ph;
 

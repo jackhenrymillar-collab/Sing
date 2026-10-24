@@ -84,6 +84,8 @@ private:
     std::unique_ptr<juce::ParameterAttachment> engineAttachment;
     bool bloomEngine = false;
     ui::TextDragger voicesDragger { "Voices", true }, glideDragger { "Glide", true }, outputDragger { "Output", true };
+    // Bloom's spectral controls, shown next to the engine switch while Bloom is on.
+    ui::TextDragger windowDragger { "Window", true }, shiftDragger { "Shift", true }, smearDragger { "Smear", true }, toneDragger { "Tone", true };
 
     ui::SaveOverlay saveOverlay;
 

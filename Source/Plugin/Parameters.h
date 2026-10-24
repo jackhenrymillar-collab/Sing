@@ -25,6 +25,10 @@ namespace ParamID
     inline constexpr auto engine     = "engine";
     inline constexpr auto air        = "air";
     inline constexpr auto space      = "space";
+    inline constexpr auto shift      = "shift";
+    inline constexpr auto smear      = "smear";
+    inline constexpr auto tone       = "tone";
+    inline constexpr auto window     = "window";
 }
 
 // The order matches LoopDirection.
@@ -40,6 +44,8 @@ juce::String formatSeconds (float seconds);
 juce::String formatSemitones (float semitones);
 juce::String formatPercent (float percent);
 juce::String formatGlide (float ms);
+juce::String formatShift (float hz);
+juce::String formatTone (float t);
 juce::String formatDecibels (float db);
 
 } // namespace sing

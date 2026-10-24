@@ -15,7 +15,6 @@ namespace
 // about 0.004 dB over a range of e^-16 to e^16, far finer than anyone can hear.
 constexpr float logOffset = 16.0f;
 constexpr float logScale = 2048.0f;
-constexpr double targetSeconds = 0.68;   // 32768 samples at 48 kHz
 constexpr int minSize = 1024;
 constexpr int maxFrames = 384;           // caps memory for very long loops
 constexpr double pi = 3.14159265358979323846;
@@ -57,10 +56,10 @@ const float* BloomAnalysis::decodeTable() noexcept
     return table->data();
 }
 
-int BloomAnalysis::chooseSize (int bufferSize, double sampleRate) noexcept
+int BloomAnalysis::chooseSize (int bufferSize, double sampleRate, double windowSeconds) noexcept
 {
-    // The power of two nearest to the target length...
-    const double target = targetSeconds * sampleRate;
+    // The power of two nearest to the window length...
+    const double target = std::clamp (windowSeconds, minWindowSeconds, maxWindowSeconds) * sampleRate;
     int size = minSize;
     while ((double) size * 1.414 < target)
         size *= 2;
@@ -78,7 +77,7 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
         return nullptr;
 
     auto a = std::make_shared<BloomAnalysis>();
-    a->size = chooseSize (length, source.sampleRate());
+    a->size = chooseSize (length, source.sampleRate(), source.settings().bloomWindowSeconds);
     a->bins = a->size / 2 + 1;
     a->binSpacing = (float) (source.sampleRate() / a->size);
     a->envSpacing = (float) (source.sampleRate() * 0.5 / (envelopePoints - 1));
@@ -201,9 +200,10 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
         // So peaks within reach of a stronger one join it, and each harmonic is redrawn as
         // one clean main lobe of the analysis window, at the centre of its energy, holding
         // all of it. What is left between harmonics stays as noise, with random phases.
-        // With harmonics unlocked (the classic method) the spectrum is kept exactly as it is.
+        // With harmonics unlocked (the classic method) the harmonics are still found, so the
+        // Tone control can tell them from the noise, but the spectrum is kept exactly as it is.
         peakList.clear();
-        for (int k = 2; lockHarmonics && k < bins - 2; ++k)
+        for (int k = 2; k < bins - 2; ++k)
         {
             const float m = mag[(size_t) k];
             if (m >= 2.0f * floorEnv[(size_t) k] && m > mag[(size_t) k - 1] && m >= mag[(size_t) k + 1])
@@ -238,6 +238,15 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
             }
             const double middle = energy > 0.0 ? moment / energy : (double) k;
 
+            if (! lockHarmonics)
+            {
+                // Classic: just mark the harmonic's main lobe as tonal.
+                for (int b = lo; b <= hi; ++b)
+                    if (std::abs ((double) b - middle) < 2.0)
+                        peaks[b] = (int16_t) std::clamp (std::lround ((middle - (double) b) * peakScale), -32767L, 32767L);
+                continue;
+            }
+
             // Redraw: the noise floor everywhere, plus the main lobe at the centre.
             double lobePower = 0.0;
             for (int b = lo; b <= hi; ++b)
@@ -270,7 +279,102 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
         }
     }
 
+    a->onsetList = findOnsets (source);
     return a;
+}
+
+std::vector<BloomAnalysis::Onset> BloomAnalysis::findOnsets (const LoopSource& source)
+{
+    std::vector<Onset> found;
+    const int length = source.size();
+    constexpr int n = 1024;
+    const double rate = source.sampleRate();
+    const int hopLen = std::max (64, (int) std::lround (rate * 0.005));   // 5 ms
+    if (length < 4 * n)
+        return found;
+    const int count = length / hopLen;
+
+    // 24 bands, evenly spaced in log frequency from 100 Hz to 12 kHz (or Nyquist).
+    constexpr int bands = 24;
+    const double topHz = std::min (12000.0, 0.45 * rate);
+    std::array<int, bands + 1> edges {};
+    for (int b = 0; b <= bands; ++b)
+        edges[(size_t) b] = std::clamp ((int) std::lround (100.0 * std::pow (topHz / 100.0, (double) b / bands) * n / rate), 1, n / 2);
+
+    RealFFT fft (n);
+    std::vector<float> window ((size_t) n), frame ((size_t) n), spectrum ((size_t) n + 2);
+    for (int i = 0; i < n; ++i)
+        window[(size_t) i] = (float) (0.5 - 0.5 * std::cos (2.0 * pi * (i + 0.5) / n));
+    std::vector<float> level ((size_t) count * bands);
+    const int channels = source.numChannels();
+    float loudest = -1000.0f;
+    for (int t = 0; t < count; ++t)
+    {
+        const long centre = (long) t * hopLen;
+        for (int i = 0; i < n; ++i)
+        {
+            long idx = (centre - n / 2 + i) % length;
+            if (idx < 0)
+                idx += length;
+            float v = 0.0f;
+            for (int ch = 0; ch < channels; ++ch)
+                v += source.channel (ch)[idx];
+            frame[(size_t) i] = v * window[(size_t) i];
+        }
+        fft.forward (frame.data(), spectrum.data());
+        for (int b = 0; b < bands; ++b)
+        {
+            double e = 1.0e-20;
+            for (int k = edges[(size_t) b]; k < std::max (edges[(size_t) b] + 1, edges[(size_t) b + 1]); ++k)
+                e += (double) spectrum[(size_t) (2 * k)] * spectrum[(size_t) (2 * k)]
+                   + (double) spectrum[(size_t) (2 * k + 1)] * spectrum[(size_t) (2 * k + 1)];
+            const auto d = (float) (10.0 * std::log10 (e));
+            level[(size_t) t * bands + (size_t) b] = d;
+            loudest = std::max (loudest, d);
+        }
+    }
+
+    // Quiet bands can't make an onset: anything 50 dB under the loudest band counts as silence.
+    for (auto& d : level)
+        d = std::max (d, loudest - 50.0f);
+
+    // The flux: the average rise in dB over the bands, one frame against the frame 10 ms
+    // before (rises spread over two frames still count in full).
+    std::vector<float> flux ((size_t) count);
+    for (int t = 0; t < count; ++t)
+    {
+        const int before = (t - 2 + count) % count;
+        float rise = 0.0f;
+        for (int b = 0; b < bands; ++b)
+            rise += std::max (0.0f, level[(size_t) t * bands + (size_t) b] - level[(size_t) before * bands + (size_t) b]);
+        flux[(size_t) t] = rise / bands;
+    }
+
+    // Peaks over the local median (about 0.2 s either side), the strongest within 50 ms.
+    constexpr float minRise = 4.0f;    // dB on average over the bands, over the median
+    constexpr float fullRise = 12.0f;  // a rise this far over the median is strength 1
+    const int span = std::max (1, (int) std::lround (0.2 * rate / hopLen));
+    const int near = std::max (1, (int) std::lround (0.05 * rate / hopLen));
+    std::vector<float> around;
+    for (int t = 0; t < count; ++t)
+    {
+        const float x = flux[(size_t) t];
+        if (x < minRise)
+            continue;
+        bool peak = true;
+        for (int d = 1; d <= near && peak; ++d)
+            peak = x >= flux[(size_t) ((t + d) % count)] && x > flux[(size_t) ((t - d + count) % count)];
+        if (! peak)
+            continue;
+        around.clear();
+        for (int d = -span; d <= span; ++d)
+            around.push_back (flux[(size_t) ((t + d + count) % count)]);
+        std::nth_element (around.begin(), around.begin() + (long) around.size() / 2, around.end());
+        const float over = x - around[around.size() / 2];
+        if (over >= minRise)
+            found.push_back ({ (double) t * hopLen, std::clamp ((over - minRise) / (fullRise - minRise), 0.0f, 1.0f) * 0.75f + 0.25f });
+    }
+    return found;
 }
 
 } // namespace sing

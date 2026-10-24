@@ -292,7 +292,7 @@ TEST_CASE ("Bloom (classic): every bin gets a random phase and the spectrum is k
     for (int f = 0; f < analysis->numFrames(); ++f)
         for (int k = 0; k < analysis->numBins(); ++k)
             marked += analysis->peaks (f)[k] != BloomAnalysis::noPeak ? 1 : 0;
-    CHECK (marked == 0);
+    CHECK (marked > 0);   // harmonics are marked for Tone, but nothing is redrawn or locked
 
     // Played at the root, the smear keeps the loop's balance of lows and highs.
     SingSynth synth;
@@ -339,4 +339,199 @@ TEST_CASE ("Bloom (classic): a held note sounds at once and keeps sounding")
                  wobble (m, 48000, 8 * 48000), -lowest);
     CHECK (lowest > -12.0);
     CHECK_THAT (detectPitch (m.data() + 6 * 48000, 96000, sr).hz, WithinAbs (196.0, 2.0));
+}
+
+namespace
+{
+// A soft held tone with one sudden loud burst 1.5 s into a 4 s voice; the loop is 1 s to 3 s.
+std::shared_ptr<const LoopSource> burstSource()
+{
+    std::vector<float> v ((size_t) (4 * 48000));
+    uint32_t noise = 1;
+    for (size_t i = 0; i < v.size(); ++i)
+    {
+        const double t = (double) i / sr;
+        float x = 0.05f * (float) std::sin (6.283185307179586 * 220.0 * t);
+        if (t >= 1.5)
+        {
+            noise = noise * 1664525u + 1013904223u;
+            const auto burst = (float) std::exp (-(t - 1.5) / 0.08);
+            x += burst * (0.5f * (float) std::sin (6.283185307179586 * 660.0 * t) + 0.3f * ((float) (noise >> 8) / 8388608.0f - 1.0f));
+        }
+        v[i] = x;
+    }
+    LoopSettings s;
+    s.start = 48000;
+    s.length = 2 * 48000;
+    s.fade = 4800;
+    s.pitchPeriod = (float) (sr / 220.0);
+    s.analyseForBloom = true;
+    const float* ch[] = { v.data() };
+    return LoopSource::build (ch, 1, (int) v.size(), sr, s);
+}
+} // namespace
+
+TEST_CASE ("Bloom: onsets are found where the sound jumps, and not in a steady vowel")
+{
+    auto src = burstSource();
+    const auto* analysis = static_cast<const BloomAnalysis*> (src->analysis (StretchMode::bloom));
+    REQUIRE (analysis != nullptr);
+    const auto& onsets = analysis->onsets();
+    REQUIRE (onsets.size() >= 1);
+    double best = 1.0e9;
+    for (const auto& o : onsets)
+    {
+        std::printf ("  onset at %.3f s in the voice, strength %.2f\n", src->toVoicePosition (o.position) / sr, o.strength);
+        best = std::min (best, std::abs (src->toVoicePosition (o.position) - 1.5 * sr));
+    }
+    CHECK (best < 0.02 * sr);
+
+    for (const auto vowel : { PlaceholderVowel::ah, PlaceholderVowel::ooh })
+    {
+        auto steady = bloomSource (vowel);
+        CHECK (static_cast<const BloomAnalysis*> (steady->analysis (StretchMode::bloom))->onsets().empty());
+    }
+}
+
+TEST_CASE ("Bloom: a stretched note passes an onset at the recorded speed")
+{
+    auto src = burstSource();
+    const auto* analysis = static_cast<const BloomAnalysis*> (src->analysis (StretchMode::bloom));
+    REQUIRE (! analysis->onsets().empty());
+    const double onset = analysis->onsets().front().position;
+
+    double seconds[2] {};
+    for (int i = 0; i < 2; ++i)
+    {
+        BloomVoice voice;
+        voice.prepare (sr);
+        BloomVoice::Parameters p;
+        p.speed = 0.05f;
+        p.onsets = i == 0 ? 0.0f : 1.0f;
+        p.numLayers = 1;
+        p.layers[0].gainLeft = p.layers[0].gainRight = 0.5f;
+        voice.setParameters (p);
+        const double half = 0.5 * (double) analysis->fftSize();
+        double startAt = onset - half - 0.05 * sr;
+        if (startAt < 0.0)
+            startAt += src->size();
+        voice.start (*src, startAt, 7u, 0.0f);
+
+        // Time from the window first reaching the onset to it leaving the window.
+        std::vector<float> l (256), r (256);
+        const double target = src->toVoicePosition (onset) + half;
+        int samples = 0;
+        while (samples < 30 * 48000 && voice.playPosition() < target)
+        {
+            std::fill (l.begin(), l.end(), 0.0f);
+            std::fill (r.begin(), r.end(), 0.0f);
+            voice.render (l.data(), r.data(), 256);
+            samples += 256;
+        }
+        seconds[i] = samples / sr;
+    }
+    std::printf ("  Bloom passing an onset at Stretch speed 0.05: %.1f s stretched, %.1f s with onsets\n", seconds[0], seconds[1]);
+    CHECK (seconds[0] > 8.0);
+    CHECK (seconds[1] < 2.0);
+}
+
+namespace
+{
+// The share of a render's power within 8 Hz of the partials n * f0 + offsetHz (n = 1 to 20).
+double partialShare (const std::vector<float>& x, int from, int n, double f0, double offsetHz)
+{
+    constexpr int size = 32768;
+    sing::RealFFT fft (size);
+    std::vector<float> frame ((size_t) size), spectrum ((size_t) size + 2);
+    std::vector<double> power ((size_t) size / 2 + 1);
+    for (int start = from; start + size <= from + n; start += size / 2)
+    {
+        for (int i = 0; i < size; ++i)
+            frame[(size_t) i] = x[(size_t) (start + i)] * (float) (0.5 - 0.5 * std::cos (6.283185307179586 * i / size));
+        fft.forward (frame.data(), spectrum.data());
+        for (int k = 0; k <= size / 2; ++k)
+            power[(size_t) k] += (double) spectrum[(size_t) (2 * k)] * spectrum[(size_t) (2 * k)]
+                               + (double) spectrum[(size_t) (2 * k + 1)] * spectrum[(size_t) (2 * k + 1)];
+    }
+    double total = 0.0, near = 0.0;
+    for (int k = 1; k <= size / 2; ++k)
+    {
+        const double hz = k * sr / size;
+        if (hz < 50.0 || hz > 20.0 * f0 + offsetHz + 100.0)
+            continue;
+        total += power[(size_t) k];
+        const double m = std::round ((hz - offsetHz) / f0);
+        if (m >= 1.0 && m <= 20.0 && std::abs (hz - (m * f0 + offsetHz)) < 8.0)
+            near += power[(size_t) k];
+    }
+    return near / (total + 1.0e-30);
+}
+
+std::vector<float> playBloom (const std::shared_ptr<const LoopSource>& src, float shiftHz, float blur, float tone)
+{
+    BloomVoice voice;
+    voice.prepare (sr);
+    BloomVoice::Parameters p;
+    p.speed = 0.3f;
+    p.shiftHz = shiftHz;
+    p.blur = blur;
+    p.tone = tone;
+    p.numLayers = 1;
+    p.layers[0].gainLeft = p.layers[0].gainRight = 0.5f;
+    voice.setParameters (p);
+    voice.start (*src, 0.0, 11u, 0.0f);
+    std::vector<float> l ((size_t) 5 * 48000), r ((size_t) 5 * 48000);
+    for (size_t i = 0; i < l.size(); i += 256)
+        voice.render (l.data() + i, r.data() + i, (int) std::min<size_t> (256, l.size() - i));
+    return l;
+}
+} // namespace
+
+TEST_CASE ("Bloom: frequency shift moves every partial by the same Hz")
+{
+    auto src = bloomSource (PlaceholderVowel::ooh);
+    const auto plain = playBloom (src, 0.0f, 0.0f, 0.0f);
+    const auto shifted = playBloom (src, 100.0f, 0.0f, 0.0f);
+    const double before = partialShare (plain, 48000, 4 * 48000, 220.0, 0.0);
+    const double onOld = partialShare (shifted, 48000, 4 * 48000, 220.0, 0.0);
+    const double onNew = partialShare (shifted, 48000, 4 * 48000, 220.0, 100.0);
+    std::printf ("  Bloom shift +100 Hz: power on 220 Hz harmonics %.2f before, %.2f after; on harmonics + 100 Hz %.2f\n", before, onOld, onNew);
+    CHECK (onNew > 0.5 * before);
+    CHECK (onOld < 0.2 * before);
+}
+
+TEST_CASE ("Bloom: Tone moves between harmonics only and breath only, and blur smears them")
+{
+    auto src = bloomSource (PlaceholderVowel::ah);
+    const double f0 = 196.0;   // the "ah" voice's root, played at the root
+    const double noise = partialShare (playBloom (src, 0.0f, 0.0f, -1.0f), 48000, 4 * 48000, f0, 0.0);
+    const double both = partialShare (playBloom (src, 0.0f, 0.0f, 0.0f), 48000, 4 * 48000, f0, 0.0);
+    const double tonal = partialShare (playBloom (src, 0.0f, 0.0f, 1.0f), 48000, 4 * 48000, f0, 0.0);
+    const double blurred = partialShare (playBloom (src, 0.0f, 1.0f, 0.0f), 48000, 4 * 48000, f0, 0.0);
+    std::printf ("  Bloom power on the harmonics: Tone -1 %.2f, 0 %.2f, +1 %.2f; blur 1 %.2f\n", noise, both, tonal, blurred);
+    CHECK (noise < both);
+    CHECK (tonal > both);
+    CHECK (blurred < 0.7 * both);
+}
+
+TEST_CASE ("Bloom: the Window setting sets the analysis length")
+{
+    const auto v = makePlaceholderVoice (PlaceholderVowel::ooh, sr, 4.0f);
+    const float* ch[] = { v.samples.data() };
+    int sizes[3] {};
+    const float seconds[3] { 0.1f, 0.68f, 1.4f };
+    for (int i = 0; i < 3; ++i)
+    {
+        LoopSettings s;
+        s.start = 0;
+        s.length = (int) v.samples.size();
+        s.fade = 4800;
+        s.analyseForBloom = true;
+        s.bloomWindowSeconds = seconds[i];
+        auto src = LoopSource::build (ch, 1, (int) v.samples.size(), sr, s);
+        sizes[i] = static_cast<const BloomAnalysis*> (src->analysis (StretchMode::bloom))->fftSize();
+    }
+    CHECK (sizes[0] == 4096);
+    CHECK (sizes[1] == 32768);
+    CHECK (sizes[2] == 65536);
 }
