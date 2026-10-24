@@ -2,6 +2,8 @@
 #include "Parameters.h"
 #include "Theme.h"
 
+#include "Stretch/GranularEngine.h"
+
 namespace sing::ui
 {
 
@@ -10,13 +12,33 @@ namespace
     constexpr int kBars = 120;
     constexpr float kGap = 2.0f;
     constexpr float kMinLengthPct = 1.0f;
+
+    // Copy tints: warm white in the centre, cooler to the left, warmer to the right.
+    const juce::Colour kCentre { 0xfffff3d6 }, kLeft { 0xffa9b8ff }, kRight { 0xffffbe96 };
+
+    juce::Colour panColour (float pan)
+    {
+        const float a = juce::jlimit (0.0f, 1.0f, std::abs (pan));
+        return kCentre.interpolatedWith (pan < 0.0f ? kLeft : kRight, a);
+    }
+
+    juce::String speedText (float speed)
+    {
+        if (speed <= 0.0f)
+            return "HELD";
+        if (speed > 0.5f)
+            return juce::String (speed, 2) + "x";
+        return "1/" + juce::String (juce::roundToInt (1.0f / speed)) + " SPEED";
+    }
 }
 
 WaveformView::WaveformView (juce::AudioProcessorValueTreeState& s)
     : state (s),
       startAttachment (*s.getParameter (ParamID::loopStart), [this] (float v) { startPct = v; repaint(); }),
       lengthAttachment (*s.getParameter (ParamID::loopLength), [this] (float v) { lengthPct = v; repaint(); }),
-      fadeAttachment (*s.getParameter (ParamID::loopFade), [this] (float v) { fadePct = v; repaint(); })
+      fadeAttachment (*s.getParameter (ParamID::loopFade), [this] (float v) { fadePct = v; repaint(); }),
+      stretchParam (s.getRawParameterValue (ParamID::stretch)),
+      holdParam (s.getRawParameterValue (ParamID::hold))
 {
     setTitle ("Voice and loop");
     setDescription ("Drag the handles to set the loop, or drag inside it to move it");
@@ -34,14 +56,46 @@ void WaveformView::setVoice (VoiceData::Ptr v)
     }
 }
 
-void WaveformView::setLights (const std::array<float, 4>& positions, const std::array<float, 4>& levels, bool show)
+void WaveformView::setLights (const std::array<Light, maxLights>& newLights, bool show, double clockSeconds)
 {
-    if (positions == lightPositions && levels == lightLevels && show == showLights)
-        return;
-    lightPositions = positions;
-    lightLevels = levels;
-    showLights = show;
-    repaint();
+    const bool any = std::any_of (newLights.begin(), newLights.end(), [] (const Light& l) { return l.note >= 0; });
+    const bool had = std::any_of (lights.begin(), lights.end(), [] (const Light& l) { return l.note >= 0; });
+    lights = newLights;
+    clockMs = clockSeconds * 1000.0;
+    rememberTails (clockMs);
+    if (any || had || show != showLights)
+    {
+        showLights = show;
+        repaint();
+    }
+}
+
+void WaveformView::rememberTails (double nowMs)
+{
+    // Forget notes that have gone.
+    for (auto& t : tails)
+        if (t.used && std::none_of (lights.begin(), lights.end(), [&] (const Light& l) { return l.note >= 0 && l.noteId == t.noteId; }))
+            t = {};
+
+    for (const auto& l : lights)
+    {
+        if (l.note < 0 || l.copy != 0)
+            continue;
+        auto it = std::find_if (tails.begin(), tails.end(), [&] (const Tail& t) { return t.used && t.noteId == l.noteId; });
+        if (it == tails.end())
+            it = std::find_if (tails.begin(), tails.end(), [] (const Tail& t) { return ! t.used; });
+        if (it == tails.end())
+            continue;
+        auto& t = *it;
+        if (t.count > 0 && nowMs < t.times[(size_t) ((t.next + tailPoints - 1) % tailPoints)])
+            t.count = t.next = 0;   // the clock went back: start the tail again
+        t.used = true;
+        t.noteId = l.noteId;
+        t.positions[(size_t) t.next] = l.position;
+        t.times[(size_t) t.next] = nowMs;
+        t.next = (t.next + 1) % tailPoints;
+        t.count = std::min (t.count + 1, tailPoints);
+    }
 }
 
 float WaveformView::loopLeft() const noexcept
@@ -162,21 +216,146 @@ void WaveformView::paint (juce::Graphics& g)
         g.fillRect (x - 1.0f, top - 16.0f, 2.0f, waveHeight + 32.0f);
     }
 
-    // A light for each sounding note, brightest for the newest.
     if (showLights)
-        for (int i = 3; i >= 0; --i)
+        paintLights (g, region);
+}
+
+void WaveformView::paintLights (juce::Graphics& g, juce::Rectangle<float> region)
+{
+    int notes = 0;
+    for (const auto& l : lights)
+        if (l.note >= 0)
+            notes = std::max (notes, l.note + 1);
+    if (notes == 0)
+        return;
+
+    // The loop, as 0 to 1 across the waveform. Read zones wrap around inside it.
+    const float loopStart = juce::jlimit (0.0f, 1.0f, startPct * 0.01f);
+    const float loopEnd = juce::jlimit (loopStart, 1.0f, (startPct + lengthPct) * 0.01f);
+    const float loopLen = loopEnd - loopStart;
+    const auto toX = [] (float p) { return margin + waveWidth * juce::jlimit (0.0f, 1.0f, p); };
+    const auto fillSpan = [&] (float from, float to, auto&& fill)
+    {
+        if (loopLen <= 1.0e-4f)
+            return;
+        const float len = std::min (loopLen, to - from);
+        const float a = loopStart + std::fmod (std::fmod (from - loopStart, loopLen) + loopLen, loopLen);
+        if (a + len <= loopEnd)
+            fill (toX (a), toX (a + len));
+        else
         {
-            const float p = lightPositions[(size_t) i];
-            const float level = lightLevels[(size_t) i];
-            if (p < 0.0f || level <= 0.001f)
+            fill (toX (a), toX (loopEnd));
+            fill (toX (loopStart), toX (loopStart + a + len - loopEnd));
+        }
+    };
+
+    // The granular read zone, from the same Stretch knob mapping the engine uses: grains start
+    // within the jitter either side of the head and each reads a grain's length at its pitch.
+    const float knob = stretchParam != nullptr ? stretchParam->load() * 0.01f : 0.6f;
+    const bool held = (holdParam != nullptr && holdParam->load() > 0.5f) || knob >= StretchKnob::freezeAt;
+    const float speed = held ? 0.0f : StretchKnob::toSpeed (knob);
+    const auto granular = StretchKnob::toGranularSettings (knob);
+    const float voiceSeconds = voice != nullptr ? (float) std::max (0.01, voice->trimSeconds()) : 4.0f;
+
+    const auto noteAlpha = [] (const Light& l) { return juce::jlimit (0.0f, 1.0f, std::sqrt (l.level)) * (l.note == 0 ? 1.0f : 0.55f); };
+    const float share = 1.0f / std::sqrt ((float) notes);
+
+    // Halos over each copy's read zone, ghosts behind.
+    for (int i = maxLights - 1; i >= 0; --i)
+    {
+        const auto& l = lights[(size_t) i];
+        if (l.note < 0 || l.position < 0.0f || l.weight <= 0.0f)
+            continue;
+
+        float before, after;
+        if (l.zone > 0.0f)
+            before = after = 0.5f * l.zone;
+        else
+        {
+            const float grain = granular.grainSeconds * l.pitchRatio;
+            const float slow = 1.0f - std::min (speed * 4.0f, 1.0f);
+            const float jitter = std::max (granular.jitterSeconds, slow * 0.5f * grain);
+            before = jitter / voiceSeconds;
+            after = (jitter + grain) / voiceSeconds;
+        }
+
+        const float alpha = l.weight * noteAlpha (l) * share * (l.copy == 0 ? 0.16f : 0.07f);
+        const auto colour = panColour (l.pan);
+        juce::ColourGradient halo (colour.withAlpha (0.0f), 0.0f, region.getY(), colour.withAlpha (0.0f), 0.0f, region.getBottom(), false);
+        halo.addColour (0.5, colour.withAlpha (alpha));
+        g.setGradientFill (halo);
+        fillSpan (l.position - before, l.position + after, [&] (float x0, float x1)
+        {
+            g.fillRect (juce::Rectangle<float> (x0, region.getY() + 2.0f, std::max (1.0f, x1 - x0), region.getHeight() - 4.0f));
+        });
+    }
+
+    // Tails: where each note's centre copy has been over the last moment.
+    const double now = clockMs;
+    const float midY = top + waveHeight * 0.5f;
+    for (const auto& t : tails)
+    {
+        if (! t.used || t.count < 2)
+            continue;
+        const auto it = std::find_if (lights.begin(), lights.end(), [&] (const Light& l) { return l.note >= 0 && l.copy == 0 && l.noteId == t.noteId; });
+        if (it == lights.end())
+            continue;
+        const float base = noteAlpha (*it) * 0.35f;
+        for (int k = 1; k < t.count; ++k)
+        {
+            const int a = (t.next - t.count + k - 1 + tailPoints) % tailPoints;
+            const int b = (a + 1) % tailPoints;
+            const double age = now - t.times[(size_t) a];
+            if (age > tailMs)
                 continue;
-            const float x = margin + waveWidth * juce::jlimit (0.0f, 1.0f, p);
-            const float alpha = juce::jlimit (0.0f, 1.0f, std::sqrt (level)) * (i == 0 ? 1.0f : 0.55f);
+            const float p0 = t.positions[(size_t) a], p1 = t.positions[(size_t) b];
+            if (std::abs (p1 - p0) > 0.5f * loopLen)   // wrapped round the loop
+                continue;
+            const float fade = (float) (1.0 - age / tailMs);
+            g.setColour (juce::Colour (0xfffff0d7).withAlpha (base * fade));
+            const float x0 = toX (std::min (p0, p1)), x1 = toX (std::max (p0, p1));
+            g.fillRect (juce::Rectangle<float> (x0, midY - 2.0f, std::max (0.0f, x1 - x0), 4.0f));
+        }
+    }
+
+    // The lights: a bright line for each note's centre copy, a fine tinted ghost for the others.
+    for (int i = maxLights - 1; i >= 0; --i)
+    {
+        const auto& l = lights[(size_t) i];
+        if (l.note < 0 || l.position < 0.0f || l.weight <= 0.0f)
+            continue;
+        const float x = toX (l.position);
+        const float alpha = noteAlpha (l);
+        if (l.copy == 0)
+        {
             const juce::Rectangle<float> line (x - 1.0f, region.getY(), 2.0f, region.getHeight());
             drawGlow (g, line, 1.0f, 10.0f, juce::Colour (0xffffecc8).withAlpha (0.9f * alpha));
             g.setColour (juce::Colour (0xfffff6e6).withAlpha (alpha));
             g.fillRect (line);
         }
+        else
+        {
+            g.setColour (panColour (l.pan).withAlpha (0.85f * alpha * l.weight));
+            g.fillRect (juce::Rectangle<float> (x - 0.6f, region.getY(), 1.2f, region.getHeight()));
+        }
+    }
+
+    // How fast the newest note is moving, under its light.
+    const auto newest = std::find_if (lights.begin(), lights.end(), [] (const Light& l) { return l.note == 0 && l.copy == 0; });
+    if (newest != lights.end() && newest->position >= 0.0f)
+    {
+        const auto font = Fonts::sans (10.0f, true, 0.14f);
+        const auto text = newest->zone > 0.0f && ! held ? juce::String() : speedText (speed);
+        if (text.isNotEmpty())
+        {
+            const float w = trackedTextWidth (text, font) + 4.0f;
+            const float x = juce::jlimit (0.0f, width - w, toX (newest->position) - w * 0.5f);
+            const juce::Rectangle<float> box (x, region.getBottom() + 1.0f, w, height - region.getBottom() - 1.0f);
+            g.setColour (Colours::night.withAlpha (0.75f));   // keeps it clear of the loop handles
+            g.fillRoundedRectangle (box.expanded (4.0f, 0.0f), box.getHeight() * 0.5f);
+            drawTrackedText (g, text, box, font, juce::Justification::centred, Colours::gold.withAlpha (0.9f));
+        }
+    }
 }
 
 WaveformView::Grab WaveformView::grabAt (juce::Point<float> p) const noexcept

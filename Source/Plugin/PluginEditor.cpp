@@ -475,14 +475,15 @@ void SingPanel::frame (double seconds, bool animate)
         repaint();
 
     // The play lights. They are motion too, so they hide when Reduce Motion is on.
-    const auto lights = processor.getLights();
-    std::array<float, 4> positions {}, levels {};
-    for (size_t i = 0; i < 4; ++i)
+    const auto found = processor.getLights();
+    static_assert (SingProcessor::maxLights == WaveformView::maxLights);
+    std::array<WaveformView::Light, WaveformView::maxLights> lights {};
+    for (size_t i = 0; i < lights.size(); ++i)
     {
-        positions[i] = lights[i].position;
-        levels[i] = lights[i].level;
+        const auto& f = found[i];
+        lights[i] = { f.position, f.level, f.weight, f.pan, f.pitchRatio, f.zone, f.note, f.copy, f.noteId };
     }
-    waveform.setLights (positions, levels, animate);
+    waveform.setLights (lights, animate, seconds);
 
     const auto now = nowSeconds();
     if (now - lastPresetCheck > 0.2)

@@ -8,6 +8,9 @@
 //
 // With seconds = 0 it writes one still (panel.png). Otherwise it writes numbered
 // frames (frame-0000.png, ...) covering that many seconds of animation.
+//
+// NOTES=60,64,67 in the environment plays those MIDI notes through the synth, so the play
+// lights show; the still is then taken after PLAY_SECONDS (default 3) of playing.
 
 #include "PluginEditor.h"
 
@@ -38,6 +41,34 @@ int main (int argc, char* argv[])
             p->setValueNotifyingHost (p->convertTo0to1 (arg.fromFirstOccurrenceOf ("=", false, false).getFloatValue()));
     }
 
+    // Optional notes, so the play lights have something to show.
+    constexpr double rate = 48000.0;
+    constexpr int block = 480;
+    juce::Array<int> notes;
+    if (const char* list = std::getenv ("NOTES"))
+        for (const auto& n : juce::StringArray::fromTokens (list, ",", ""))
+            notes.add (n.getIntValue());
+    double audioTime = 0.0;
+    juce::AudioBuffer<float> audio (2, block);
+    juce::MidiBuffer midi;
+    if (! notes.isEmpty())
+    {
+        processor.setPlayConfigDetails (0, 2, rate, block);
+        processor.prepareToPlay (rate, block);
+        for (int n : notes)
+            midi.addEvent (juce::MidiMessage::noteOn (1, n, 0.8f), 0);
+    }
+    auto playUntil = [&] (double t)
+    {
+        while (! notes.isEmpty() && audioTime < t)
+        {
+            audio.clear();
+            processor.processBlock (audio, midi);
+            midi.clear();
+            audioTime += block / rate;
+        }
+    };
+
     std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
     auto* singEditor = dynamic_cast<sing::SingEditor*> (editor.get());
 
@@ -53,7 +84,19 @@ int main (int argc, char* argv[])
 
     if (seconds <= 0.0)
     {
-        singEditor->renderFrame (2.4, true);
+        if (notes.isEmpty())
+            singEditor->renderFrame (2.4, true);
+        else
+        {
+            // Play in step with the panel's clock, so the tails build as they would live.
+            const char* play = std::getenv ("PLAY_SECONDS");
+            const double total = play != nullptr ? std::atof (play) : 3.0;
+            for (double t = 0.0; t <= total; t += 1.0 / 30.0)
+            {
+                playUntil (t);
+                singEditor->renderFrame (t, true);
+            }
+        }
         write ("panel.png");
         return 0;
     }
@@ -62,6 +105,7 @@ int main (int argc, char* argv[])
     const auto t0 = juce::Time::getMillisecondCounterHiRes();
     for (int i = 0; i < frames; ++i)
     {
+        playUntil (static_cast<double> (i) / fps);
         singEditor->renderFrame (static_cast<double> (i) / fps, true);
         write ("frame-" + juce::String (i).paddedLeft ('0', 4) + ".png");
     }

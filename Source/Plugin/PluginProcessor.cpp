@@ -29,9 +29,6 @@ SingProcessor::SingProcessor()
     bypass  = state.getRawParameterValue (ParamID::bypass);
     bypassParam = state.getParameter (ParamID::bypass);
 
-    for (auto& p : lightPositions) p = -1.0f;
-    for (auto& l : lightLevels) l = 0.0f;
-
     for (auto* id : kLoopIds)
         state.addParameterListener (id, this);
 
@@ -261,24 +258,51 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     }
     bypassMix = g;
 
-    // Play lights for the waveform.
-    std::array<double, maxLights> positions {};
-    std::array<float, maxLights> levels {};
-    const int count = synth.getPlayPositions (positions.data(), levels.data(), maxLights);
+    // Play lights for the waveform: every Spread copy of the newest notes.
+    std::array<SingSynth::PlayLight, maxLights> found {};
+    const int count = synth.getPlayLights (found.data(), maxLightNotes, maxLights);
     const double start = voiceTrimStart.load(), length = std::max (1, voiceTrimLength.load());
     for (int i = 0; i < maxLights; ++i)
     {
-        lightPositions[(size_t) i] = i < count ? static_cast<float> ((positions[(size_t) i] - start) / length) : -1.0f;
-        lightLevels[(size_t) i] = i < count ? levels[(size_t) i] : 0.0f;
+        auto& out = lights[(size_t) i];
+        if (i < count)
+        {
+            const auto& l = found[(size_t) i];
+            out.position = static_cast<float> ((l.position - start) / length);
+            out.level = l.level;
+            out.weight = l.weight;
+            out.pan = l.pan;
+            out.pitchRatio = l.pitchRatio;
+            out.zone = static_cast<float> (l.zoneSamples / length);
+            out.copy = l.copy;
+            out.noteId = l.noteId;
+            out.note = l.note;
+        }
+        else
+            out.note = -1;
     }
 }
 
 std::array<SingProcessor::Light, SingProcessor::maxLights> SingProcessor::getLights() const noexcept
 {
-    std::array<Light, maxLights> lights {};
+    std::array<Light, maxLights> result {};
     for (int i = 0; i < maxLights; ++i)
-        lights[(size_t) i] = { lightPositions[(size_t) i].load(), lightLevels[(size_t) i].load() };
-    return lights;
+    {
+        const auto& in = lights[(size_t) i];
+        auto& l = result[(size_t) i];
+        l.note = in.note.load();
+        if (l.note < 0)
+            continue;
+        l.position = in.position.load();
+        l.level = in.level.load();
+        l.weight = in.weight.load();
+        l.pan = in.pan.load();
+        l.pitchRatio = in.pitchRatio.load();
+        l.zone = in.zone.load();
+        l.copy = in.copy.load();
+        l.noteId = in.noteId.load();
+    }
+    return result;
 }
 
 juce::AudioProcessorEditor* SingProcessor::createEditor()
