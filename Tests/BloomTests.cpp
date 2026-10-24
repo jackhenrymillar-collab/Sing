@@ -149,6 +149,11 @@ TEST_CASE ("Bloom: analysis is only built when asked for")
     CHECK_THAT (a->hop() * a->numFrames(), WithinAbs ((double) with->size(), 1.0e-6));
 }
 
+namespace
+{
+double partialShare (const std::vector<float>& x, int from, int n, double f0, double offsetHz);
+}
+
 TEST_CASE ("Bloom: pitch follows the key and the level stays near the loop's")
 {
     auto src = bloomSource (PlaceholderVowel::ooh);
@@ -170,7 +175,13 @@ TEST_CASE ("Bloom: pitch follows the key and the level stays near the loop's")
                          stretch, semis, detectPitch (m.data() + 48000, 96000, sr).hz, lv - dry);
 
             INFO ("stretch " << stretch << ", semitones " << semis);
-            CHECK_THAT (detectPitch (m.data() + 48000, 96000, sr).hz, WithinAbs (hz, hz * 0.01));
+            // A frozen classic note's random phases can leave too few steady stretches for
+            // YIN (low notes have fewer bins per harmonic): then check where the power is.
+            const auto found = detectPitch (m.data() + 48000, 96000, sr);
+            if (found.pitched() || stretch < 1.0f)
+                CHECK_THAT (found.hz, WithinAbs (hz, hz * 0.01));
+            else
+                CHECK (partialShare (m, 48000, 2 * 48000, hz, 0.0) > 0.6);
             CHECK (std::abs (lv - dry) < 3.0);   // granular stays within about 3 dB too
             CHECK (allFinite (r));
         }
@@ -736,4 +747,207 @@ TEST_CASE ("Bloom: a new note's play light starts at the note's start, not where
         furthest = std::max (furthest, std::abs (voice.playPosition() - startPosition));
     }
     CHECK (furthest < 0.2 * sr);
+}
+
+TEST_CASE ("RealFFT: the inverse in chunks matches the whole inverse")
+{
+    for (const int n : { 1024, 65536 })
+    {
+        sing::RealFFT fft (n);
+        std::vector<float> x ((size_t) n), spectrum ((size_t) n + 2), whole ((size_t) n), parts ((size_t) n);
+        uint32_t r = 3;
+        for (auto& v : x)
+        {
+            r = r * 1664525u + 1013904223u;
+            v = (float) (r >> 8) / 8388608.0f - 1.0f;
+        }
+        fft.forward (x.data(), spectrum.data());
+        fft.inverse (spectrum.data(), whole.data());
+        for (const int chunks : { 1, 4, 32 })
+        {
+            for (int u = 0; u < fft.inverseChunkCount (chunks); ++u)
+                fft.inverseChunk (u, chunks, spectrum.data(), parts.data());
+            float worst = 0.0f;
+            for (int i = 0; i < n; ++i)
+                worst = std::max (worst, std::abs (parts[(size_t) i] - whole[(size_t) i]));
+            CHECK (worst < 1.0e-6f);
+            CHECK (std::abs (whole[123] - x[123]) < 1.0e-4f);
+        }
+    }
+}
+
+namespace
+{
+// The power of a render between lo and hi Hz, in dB (for slopes and octaves).
+double bandDb (const std::vector<float>& x, int from, int n, double lo, double hi)
+{
+    constexpr int size = 16384;
+    sing::RealFFT fft (size);
+    std::vector<float> frame ((size_t) size), spectrum ((size_t) size + 2);
+    double inside = 1.0e-30;
+    for (int start = from; start + size <= from + n; start += size / 2)
+    {
+        for (int i = 0; i < size; ++i)
+            frame[(size_t) i] = x[(size_t) (start + i)] * (float) (0.5 - 0.5 * std::cos (6.283185307179586 * i / size));
+        fft.forward (frame.data(), spectrum.data());
+        for (int k = 1; k <= size / 2; ++k)
+        {
+            const double hz = k * sr / size;
+            if (hz >= lo && hz < hi)
+                inside += (double) spectrum[(size_t) (2 * k)] * spectrum[(size_t) (2 * k)]
+                        + (double) spectrum[(size_t) (2 * k + 1)] * spectrum[(size_t) (2 * k + 1)];
+        }
+    }
+    return 10.0 * std::log10 (inside / (hi - lo));
+}
+
+double renderDb (const std::vector<float>& x, int from, int n)
+{
+    return db (rms (x.data() + from, n));
+}
+} // namespace
+
+TEST_CASE ("Bloom (classic): Smear widens every harmonic and keeps the level")
+{
+    auto src = bloomSource (PlaceholderVowel::ooh);
+    const auto plain = playBloom (src, 0.0f, 0.0f, 0.0f);
+    const auto some = playBloom (src, 0.0f, 0.4f, 0.0f);
+    const auto full = playBloom (src, 0.0f, 1.0f, 0.0f);
+    const double p0 = partialShare (plain, 48000, 4 * 48000, 220.0, 0.0);
+    const double p1 = partialShare (some, 48000, 4 * 48000, 220.0, 0.0);
+    const double p2 = partialShare (full, 48000, 4 * 48000, 220.0, 0.0);
+    const double l0 = renderDb (plain, 48000, 4 * 48000), l2 = renderDb (full, 48000, 4 * 48000);
+    std::printf ("  Bloom Smear: power on the harmonics %.2f (off), %.2f (40 %%), %.2f (100 %%); level change %+.1f dB\n", p0, p1, p2, l2 - l0);
+    CHECK (p1 < p0);
+    CHECK (p2 < 0.6 * p0);
+    CHECK (std::abs (l2 - l0) < 1.5);
+}
+
+TEST_CASE ("Bloom (classic): Octaves adds the spectrum an octave down and up, at the same level")
+{
+    auto src = bloomSource (PlaceholderVowel::ooh);   // 220 Hz
+    BloomVoice::Parameters p;
+    const auto plain = playBloomWith (src, p);
+    p.octaves = true;
+    p.octaveLevels = { 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f };   // only an octave down
+    const auto down = playBloomWith (src, p);
+    p.octaveLevels = { 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f };   // only an octave up
+    const auto up = playBloomWith (src, p);
+    const double l0 = renderDb (plain, 48000, 3 * 48000);
+    std::printf ("  Bloom Octaves: 110 Hz %+.1f dB (down) vs %+.1f (plain); 440 Hz %+.1f (up) vs %+.1f (plain); levels %+.1f, %+.1f dB\n",
+                 bandDb (down, 48000, 3 * 48000, 100, 120), bandDb (plain, 48000, 3 * 48000, 100, 120),
+                 bandDb (up, 48000, 3 * 48000, 430, 450), bandDb (plain, 48000, 3 * 48000, 430, 450),
+                 renderDb (down, 48000, 3 * 48000) - l0, renderDb (up, 48000, 3 * 48000) - l0);
+    CHECK (bandDb (down, 48000, 3 * 48000, 100, 120) > bandDb (plain, 48000, 3 * 48000, 100, 120) + 20.0);
+    CHECK (bandDb (up, 48000, 3 * 48000, 210, 230) < bandDb (plain, 48000, 3 * 48000, 210, 230) - 20.0);   // the 220 Hz root moved away
+    CHECK (std::abs (renderDb (down, 48000, 3 * 48000) - l0) < 2.0);
+    CHECK (std::abs (renderDb (up, 48000, 3 * 48000) - l0) < 2.0);
+}
+
+TEST_CASE ("Bloom: the Filter's smooth slopes fall by 6 or 12 dB per octave")
+{
+    auto src = noiseSource();
+    BloomVoice::Parameters p;
+    p.filter = true;
+    p.lowHz = 2000.0f;
+    p.highHz = 20000.0f;
+    for (const int slope : { 1, 2 })
+    {
+        p.filterSlope = slope;
+        const auto x = playBloomWith (src, p);
+        const double pass = bandDb (x, 48000, 3 * 48000, 6000, 8000);
+        const double oneDown = bandDb (x, 48000, 3 * 48000, 480, 520);     // two octaves under 2 kHz
+        const double twoDown = bandDb (x, 48000, 3 * 48000, 240, 260);     // three octaves under
+        std::printf ("  Bloom Filter %d dB/oct: -%.1f dB two octaves under, -%.1f dB three under\n", slope * 6, pass - oneDown, pass - twoDown);
+        CHECK_THAT (pass - oneDown, WithinAbs (12.0 * slope, 3.0));
+        CHECK_THAT (oneDown - twoDown, WithinAbs (6.0 * slope, 2.0));
+    }
+}
+
+TEST_CASE ("Bloom: the Compressor evens out a loop's loud and quiet parts")
+{
+    // Noise, 12 dB louder in the second half of the loop.
+    std::vector<float> v ((size_t) (4 * 48000));
+    uint32_t noise = 5;
+    for (size_t i = 0; i < v.size(); ++i)
+    {
+        noise = noise * 1664525u + 1013904223u;
+        v[i] = (i % 96000 < 48000 ? 0.05f : 0.2f) * ((float) (noise >> 8) / 8388608.0f - 1.0f);
+    }
+    LoopSettings s;
+    s.start = 0;
+    s.length = (int) v.size();
+    s.fade = 2400;
+    s.analyseForBloom = true;
+    s.bloomWindowSeconds = 0.17f;
+    const float* ch[] = { v.data() };
+    auto src = LoopSource::build (ch, 1, (int) v.size(), sr, s);
+
+    const auto swing = [&] (float amount)
+    {
+        BloomVoice voice;
+        voice.prepare (sr);
+        BloomVoice::Parameters p;
+        p.speed = 1.0f;
+        p.numLayers = 1;
+        p.layers[0].gainLeft = p.layers[0].gainRight = 0.5f;
+        p.compressor = amount;
+        voice.setParameters (p);
+        voice.start (*src, 0.0, 3u, 0.0f);
+        std::vector<float> l ((size_t) 4 * 48000), r ((size_t) 4 * 48000);
+        for (size_t i = 0; i < l.size(); i += 256)
+            voice.render (l.data() + i, r.data() + i, 256);
+        double lo = 1000.0, hi = -1000.0;
+        for (int b = 24000; b + 9600 <= 4 * 48000; b += 9600)
+        {
+            const double d = renderDb (l, b, 9600);
+            lo = std::min (lo, d);
+            hi = std::max (hi, d);
+        }
+        return hi - lo;
+    };
+    const double off = swing (0.0f), on = swing (1.0f);
+    std::printf ("  Bloom Compressor: loudest to quietest 0.2 s %.1f dB off, %.1f dB at 100 %%\n", off, on);
+    CHECK (off > 9.0);
+    CHECK (on < 0.5 * off);
+}
+
+TEST_CASE ("Bloom: a 12 s window plays on a long loop, at about the loop's level")
+{
+    std::vector<float> v ((size_t) (30 * 48000));
+    uint32_t noise = 9;
+    for (auto& x : v)
+    {
+        noise = noise * 1664525u + 1013904223u;
+        x = 0.1f * ((float) (noise >> 8) / 8388608.0f - 1.0f);
+    }
+    LoopSettings s;
+    s.start = 0;
+    s.length = (int) v.size();
+    s.fade = 4800;
+    s.analyseForBloom = true;
+    s.bloomWindowSeconds = 12.0f;
+    s.hostSampleRate = sr;
+    const float* ch[] = { v.data() };
+    auto src = LoopSource::build (ch, 1, (int) v.size(), sr, s);
+    const auto* a = static_cast<const BloomAnalysis*> (src->analysis (StretchMode::bloom));
+    REQUIRE (a->fftSize() == 524288);
+    CHECK (a->numWorkspaces() >= 2);
+
+    SingSynth synth;
+    synth.prepare (sr, 256);
+    synth.setSource (src.get());
+    auto settings = bloomSynth (0.5f);
+    settings.voice.spread = 0.0f;
+    synth.setSettings (settings);
+    synth.noteOn (60, 1.0f);
+    const auto m = mono (render (synth, 8 * 48000));
+    int onset = 0;
+    while (onset < (int) m.size() && std::abs (m[(size_t) onset]) < 1.0e-4f)
+        ++onset;
+    const double lv = db (rms (m.data() + 3 * 48000, 4 * 48000)) - db (rms (v.data(), (int) v.size()));
+    std::printf ("  Bloom 12 s window: sounds after %.2f s, level %+.1f dB against the loop\n", onset / sr, lv);
+    CHECK (onset < 48000);
+    CHECK (std::abs (lv) < 4.0);
+    CHECK (allFinite (render (synth, 48000)));
 }

@@ -5,6 +5,7 @@
 #include "VoiceData.h"
 
 #include "Effects/Air.h"
+#include "Effects/Binaural.h"
 #include "Effects/Space.h"
 #include "Voice/SingSynth.h"
 #include "Voice/SourceExchange.h"
@@ -123,6 +124,7 @@ private:
     SingSynth synth;
     Air air;
     Space space;
+    Binaural binaural;
     std::vector<float> monoRight;   // a right channel for the effects when the output is mono
     std::atomic<bool> loopDirty { true };
     std::atomic<int> voiceTrimStart { 0 }, voiceTrimLength { 1 };
@@ -169,7 +171,24 @@ private:
     std::atomic<float>* filterOn = nullptr;
     std::atomic<float>* filterLow = nullptr;
     std::atomic<float>* filterHigh = nullptr;
+    std::atomic<float>* filterSlope = nullptr;
+    std::atomic<float>* compressorOn = nullptr;
+    std::atomic<float>* compressorAmount = nullptr;
+    std::atomic<float>* octavesOn = nullptr;
+    std::atomic<float>* octaveDown2 = nullptr;
+    std::atomic<float>* octaveDown1 = nullptr;
+    std::atomic<float>* octaveRoot = nullptr;
+    std::atomic<float>* octaveUp1 = nullptr;
+    std::atomic<float>* octaveUp15 = nullptr;
+    std::atomic<float>* octaveUp2 = nullptr;
+    std::atomic<float>* binauralOn = nullptr;
+    std::atomic<float>* binauralRate = nullptr;
+    std::atomic<float>* binauralAmount = nullptr;
+    std::atomic<float>* spaceFilterOn = nullptr;
+    std::atomic<float>* spaceLow = nullptr;
+    std::atomic<float>* spaceHigh = nullptr;
     juce::AudioProcessorParameter* bypassParam = nullptr;
+    double preparedRate = 0.0;
 
     // Output level and bypass ramp smoothly.
     juce::SmoothedValue<float> outputGain;

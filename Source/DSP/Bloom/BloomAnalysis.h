@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Bloom/BloomWorkspace.h"
 #include "Stretch/LoopSource.h"
 
 #include <cstdint>
@@ -11,8 +12,8 @@ namespace sing
 
 // Bloom's analysis of one loop, built once when the loop is built (off the audio thread).
 //
-// The loop is cut into overlapping frames, each a long Hann-windowed FFT (0.68 s unless the
-// Window control says otherwise),
+// The loop is cut into overlapping frames, each a long windowed FFT (0.68 s unless the
+// Window control says otherwise; Hamming for the classic method, Hann with locked harmonics),
 // read with wrap-around so the seam is already blended. For every frame Sing keeps only how
 // loud each frequency is, split into two parts:
 // - the spectral envelope: the vowel's overall shape, smoothed over a few hundred Hz;
@@ -74,11 +75,27 @@ public:
     static float decode (uint16_t code) noexcept { return decodeTable()[code]; }
 
     // The Window control's range, in seconds.
-    static constexpr double minWindowSeconds = 0.1, maxWindowSeconds = 1.4;
+    static constexpr double minWindowSeconds = 0.1, maxWindowSeconds = 40.0;
 
     // Picks the FFT size for a loop: the power of two nearest the window length, smaller for
     // loops shorter than that.
     static int chooseSize (int bufferSize, double sampleRate, double windowSeconds = 0.68) noexcept;
+
+    // How loud each frame is (its power, summed over the bins), and the loop's typical frame
+    // power (the geometric mean over the frames), for the Compressor.
+    float framePower (int frame) const noexcept { return powerData[(size_t) frame]; }
+    float typicalPower() const noexcept { return typical; }
+
+    // The per-note buffers made for this loop's window (see BloomWorkspace). claim() is
+    // real-time safe and returns nullptr when every one is in use.
+    BloomWorkspace* claimWorkspace() const noexcept;
+    int numWorkspaces() const noexcept { return (int) workspaces.size(); }
+
+    // The synthesis FFT size for this analysis at a host sample rate.
+    static int synthesisSize (int analysisSize, double sourceRate, double hostRate) noexcept;
+
+    // Memory the per-note buffers may take for one loop, in total.
+    static constexpr size_t workspaceBudget = (size_t) 640 << 20;
 
 private:
     static const float* decodeTable() noexcept;
@@ -91,6 +108,9 @@ private:
     std::vector<float> envData;
     std::vector<int16_t> peakData;
     std::vector<Onset> onsetList;
+    std::vector<float> powerData;
+    float typical = 0.0f;
+    std::vector<std::unique_ptr<BloomWorkspace>> workspaces;
 };
 
 } // namespace sing

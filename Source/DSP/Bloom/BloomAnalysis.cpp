@@ -94,7 +94,11 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
     double windowPower = 0.0;
     for (int i = 0; i < n; ++i)
     {
-        window[(size_t) i] = (float) (0.5 - 0.5 * std::cos (2.0 * pi * (i + 0.5) / n));
+        // Classic: Hamming, as the method's own implementations use; its far side lobes are
+        // lower than they need to be for noise with random phases, and its main lobe is
+        // narrower than Hann's. Locked harmonics redraw each harmonic as a Hann main lobe.
+        const double c = std::cos (2.0 * pi * (i + 0.5) / n);
+        window[(size_t) i] = (float) (source.settings().bloomLockHarmonics ? 0.5 - 0.5 * c : 0.54 - 0.46 * c);
         windowPower += (double) window[(size_t) i] * window[(size_t) i];
     }
     const float density = (float) (1.0 / std::sqrt (windowPower));
@@ -115,6 +119,7 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
     a->fineData.resize ((size_t) a->frames * (size_t) bins);
     a->envData.resize ((size_t) a->frames * envelopePoints);
     a->peakData.assign ((size_t) a->frames * (size_t) bins, noPeak);
+    a->powerData.assign ((size_t) a->frames, 0.0f);
 
     const int channels = source.numChannels();
     const bool lockHarmonics = source.settings().bloomLockHarmonics;
@@ -142,6 +147,12 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
             peak = std::max (peak, mag[(size_t) k]);
         }
         const float floor = std::max (peak * 1.0e-6f, 1.0e-12f);
+        {
+            double power = 0.0;
+            for (int k = 1; k < bins - 1; ++k)
+                power += (double) mag[(size_t) k] * mag[(size_t) k];
+            a->powerData[(size_t) f] = (float) power;
+        }
 
         // The floor: a moving average of log magnitude, which sits between the harmonics.
         // Harmonics are found against it.
@@ -281,7 +292,54 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
     }
 
     a->onsetList = findOnsets (source);
+
+    // The typical frame power: the geometric mean over the frames, ignoring near-silence.
+    {
+        float loudest = 0.0f;
+        for (const float p : a->powerData)
+            loudest = std::max (loudest, p);
+        double logSum = 0.0;
+        int counted = 0;
+        for (const float p : a->powerData)
+            if (p > loudest * 1.0e-4f)
+            {
+                logSum += std::log ((double) p);
+                ++counted;
+            }
+        a->typical = counted > 0 ? (float) std::exp (logSum / counted) : loudest;
+    }
+
+    // The notes' buffers, at the size they will synthesise at.
+    const double hostRate = source.settings().hostSampleRate > 0.0 ? source.settings().hostSampleRate : source.sampleRate();
+    const int synthSize = synthesisSize (n, source.sampleRate(), hostRate);
+    const int frameOverlap = lockHarmonics ? 4 : 2;
+    constexpr int layers = 7;   // BloomVoice::maxLayers
+    const size_t each = BloomWorkspace::bytesFor (synthSize, frameOverlap, layers, lockHarmonics);
+    const int wanted = std::clamp (source.settings().bloomNotes, 1, 64);
+    const int count = std::clamp ((int) (workspaceBudget / std::max<size_t> (each, 1)), std::min (2, wanted), wanted);
+    RealFFT::makeShared (synthSize);
+    a->workspaces.reserve ((size_t) count);
+    for (int i = 0; i < count; ++i)
+        a->workspaces.push_back (std::make_unique<BloomWorkspace> (synthSize, frameOverlap, layers, lockHarmonics));
     return a;
+}
+
+BloomWorkspace* BloomAnalysis::claimWorkspace() const noexcept
+{
+    for (const auto& w : workspaces)
+        if (w->tryClaim())
+            return w.get();
+    return nullptr;
+}
+
+int BloomAnalysis::synthesisSize (int analysisSize, double sourceRate, double hostRate) noexcept
+{
+    // The power of two nearest the analysed window's length at the host rate.
+    const double samples = (double) analysisSize / std::max (sourceRate, 1.0) * std::max (hostRate, 1.0);
+    int s = minSize;
+    while (s < (1 << 23) && (double) s * 1.414 < samples)
+        s *= 2;
+    return s;
 }
 
 std::vector<BloomAnalysis::Onset> BloomAnalysis::findOnsets (const LoopSource& source)

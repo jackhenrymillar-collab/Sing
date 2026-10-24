@@ -3,6 +3,7 @@
 #include "TestHelpers.h"
 
 #include "Effects/Air.h"
+#include "Effects/Binaural.h"
 #include "Effects/Space.h"
 
 #include <functional>
@@ -166,4 +167,69 @@ TEST_CASE ("Space: the knob sets one long, lush tail")
         CHECK (finite (l));
         CHECK (*std::max_element (l.begin(), l.end()) < 1.0f);
     }
+}
+
+TEST_CASE ("Space: its filter cuts lows and highs from the reverb only")
+{
+    // A burst of noise, then the tail alone: compare the tail with and without the filter.
+    const int n = 4 * 48000;
+    const auto tail = [&] (bool filtered, double hz, bool high)
+    {
+        std::vector<float> l ((size_t) n, 0.0f), r ((size_t) n, 0.0f);
+        uint32_t noise = 3;
+        for (int i = 0; i < 24000; ++i)
+        {
+            noise = noise * 1664525u + 1013904223u;
+            l[(size_t) i] = r[(size_t) i] = 0.3f * ((float) (noise >> 8) / 8388608.0f - 1.0f);
+        }
+        Space space;
+        space.prepare (sr, 512);
+        space.setAmount (0.6f);
+        space.setFilter (filtered, 800.0f, 3000.0f);
+        space.reset();
+        runBlocks (n, 512, [&] (int i, int m) { space.process (l.data() + i, r.data() + i, m); });
+        return bandLevel (std::vector<float> (l.begin() + 48000, l.end()), hz, high);
+    };
+    const double lowCut = tail (false, 300.0, false) - tail (true, 300.0, false);
+    const double highCut = tail (false, 8000.0, true) - tail (true, 8000.0, true);
+    std::printf ("  Space filter 800 Hz to 3 kHz: tail under 300 Hz down %.1f dB, over 8 kHz down %.1f dB\n", lowCut, highCut);
+    CHECK (lowCut > 12.0);
+    CHECK (highCut > 12.0);
+}
+
+TEST_CASE ("Binaural: each ear moves by half the beat, in opposite directions")
+{
+    const int n = 1 << 16;
+    Binaural b;
+    b.prepare (sr);
+    b.set (true, 4.0f, 1.0f);
+    b.reset();
+    std::vector<float> l ((size_t) n), r ((size_t) n);
+    for (int i = 0; i < n; ++i)
+        l[(size_t) i] = r[(size_t) i] = (float) std::sin (twoPi * 1000.0 * i / sr);
+    b.process (l.data(), r.data(), n);
+    // Correlate against 1002 Hz and 998 Hz tones: each ear should match its own.
+    const auto match = [&] (const std::vector<float>& x, double hz)
+    {
+        double c = 0.0, s = 0.0;
+        for (int i = 4800; i < n; ++i)
+        {
+            c += x[(size_t) i] * std::cos (twoPi * hz * i / sr);
+            s += x[(size_t) i] * std::sin (twoPi * hz * i / sr);
+        }
+        return 2.0 * std::sqrt (c * c + s * s) / (n - 4800);
+    };
+    std::printf ("  Binaural 4 Hz: left at 1002 Hz %.2f, 998 Hz %.2f; right at 998 Hz %.2f, 1002 Hz %.2f\n",
+                 match (l, 1002.0), match (l, 998.0), match (r, 998.0), match (r, 1002.0));
+    CHECK (match (l, 1002.0) > 0.95);
+    CHECK (match (l, 998.0) < 0.05);
+    CHECK (match (r, 998.0) > 0.95);
+    CHECK (match (r, 1002.0) < 0.05);
+
+    // Off, the sound passes untouched.
+    Binaural off;
+    off.prepare (sr);
+    std::vector<float> a ((size_t) 4800, 0.25f), c = a;
+    off.process (a.data(), c.data(), 4800);
+    CHECK (a == std::vector<float> ((size_t) 4800, 0.25f));
 }

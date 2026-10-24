@@ -35,6 +35,10 @@ struct VoiceSettings
     int harmonicsCount = 16;         // ...and how many of them
     bool filter = false;             // Filter: keeps lowHz to highHz (cuts it out when lowHz is above highHz)
     float lowHz = 120.0f, highHz = 8000.0f;
+    int filterSlope = 0;             // 0 sharp, 1 6 dB per octave, 2 12 dB per octave
+    float compressor = 0.0f;         // Compressor: 0 off to 1, each frame toward the loop's typical level
+    bool octaves = false;            // Octaves: the spectrum mixed with copies -2, -1, 0, +1, +1 and a fifth, +2 octaves away
+    std::array<float, 6> octaveLevels { 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f };
 
     // The voice's root pitch. Unpitched voices (breaths) still map keys from rootHz, but the
     // formant shifter uses short frames and a fixed envelope width instead of the period.

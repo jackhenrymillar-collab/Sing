@@ -59,6 +59,10 @@ juce::String formatHz (float hz)
 
 juce::String formatCents (float c) { return juce::String (juce::roundToInt (c)) + " ct"; }
 
+juce::String formatBeat (float hz) { return juce::String (hz, hz < 9.95f ? 1 : 0) + " Hz"; }
+
+juce::StringArray filterSlopeNames() { return { "Sharp", "6 dB", "12 dB" }; }
+
 juce::String formatGlide (float ms)
 {
     return ms < 995.0f ? juce::String (juce::roundToInt (ms)) + " ms" : juce::String (ms / 1000.0f, 1) + " s";
@@ -118,7 +122,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     // Added with Bloom's spectral controls; 0 leaves the sound as before.
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::shift, v }, "Shift", Range { -500.0f, 500.0f, 1.0f }, 0.0f, withText (formatShift)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::smear, v }, "Smear", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatPercent)));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::window, v }, "Window", skewed (0.1f, 1.4f, 0.68f), 0.68f, withText (formatSeconds)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::window, v }, "Window", skewed (0.1f, 40.0f, 1.4f), 0.68f, withText (formatSeconds)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::tone, v }, "Tone", Range { -100.0f, 100.0f, 1.0f }, 0.0f, withText (formatTone)));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::keepVowel, v }, "Keep Vowel", true));
     // Bloom's Advanced modules. The switches for the older modules start on, so older
@@ -134,6 +138,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::filterOn, v }, "Filter On", false));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::filterLow, v }, "Filter Low", skewed (20.0f, 20000.0f, 640.0f), 120.0f, withText (formatHz)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::filterHigh, v }, "Filter High", skewed (20.0f, 20000.0f, 640.0f), 8000.0f, withText (formatHz)));
+    // The modules from the method's own implementations. All start off.
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::filterSlope, v }, "Filter Slope", filterSlopeNames(), 0));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::compressorOn, v }, "Compressor On", false));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::compressor, v }, "Compressor", Range { 0.0f, 100.0f, 0.1f }, 50.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::octavesOn, v }, "Octaves On", false));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::octaveDown2, v }, "Octave -2", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::octaveDown1, v }, "Octave -1", Range { 0.0f, 100.0f, 0.1f }, 50.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::octaveRoot, v }, "Octave 0", Range { 0.0f, 100.0f, 0.1f }, 100.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::octaveUp1, v }, "Octave +1", Range { 0.0f, 100.0f, 0.1f }, 30.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::octaveUp15, v }, "Octave +1 Fifth", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::octaveUp2, v }, "Octave +2", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::binauralOn, v }, "Binaural On", false));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::binauralRate, v }, "Binaural Rate", skewed (0.1f, 30.0f, 4.0f), 4.0f, withText (formatBeat)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::binauralAmount, v }, "Binaural Amount", Range { 0.0f, 100.0f, 0.1f }, 100.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::spaceFilterOn, v }, "Space Filter On", false));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::spaceLow, v }, "Space Low Cut", skewed (20.0f, 2000.0f, 200.0f), 150.0f, withText (formatHz)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::spaceHigh, v }, "Space High Cut", skewed (1000.0f, 20000.0f, 6000.0f), 9000.0f, withText (formatHz)));
     // Also the host's bypass switch (see SingProcessor::getBypassParameter). Clicking the evening star toggles it.
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::bypass, v }, "Bypass", false));
 

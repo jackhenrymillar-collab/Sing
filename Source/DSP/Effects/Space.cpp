@@ -53,12 +53,36 @@ void Space::reset()
     preDelayR.reset();
     lowL.reset();
     lowR.reset();
+    for (auto* b : { &wetLowL, &wetLowR, &wetHighL, &wetHighR })
+        b->reset();
+    lowNow = lowTarget;
+    highNow = highTarget;
+    updateFilter (0);
     const auto m = mapping (amount);
     wetGain.snapTo (amount > 0.0f ? m.wet : 0.0f);
     dryGain.snapTo (amount > 0.0f ? m.dry : 1.0f);
     preDelay.snapTo (reverb::msToSamples (m.preDelayMs, rate));
     running = amount > 0.0f;
     silentSamples = 0;
+}
+
+void Space::setFilter (bool on, float lowHz, float highHz) noexcept
+{
+    lowTarget = on ? std::clamp (lowHz, 10.0f, 20000.0f) : 10.0f;
+    highTarget = on ? std::clamp (highHz, 100.0f, 22000.0f) : 22000.0f;
+}
+
+void Space::updateFilter (int samples) noexcept
+{
+    // Glide on a log scale, about 50 ms to settle.
+    const float k = samples <= 0 ? 1.0f : 1.0f - std::exp (-(float) samples / (0.015f * (float) rate));
+    lowNow *= std::pow (lowTarget / lowNow, k);
+    highNow *= std::pow (highTarget / highNow, k);
+    const double top = 0.45 * rate;
+    wetLowL.setHighPass (lowNow, rate);
+    wetLowR.setHighPass (lowNow, rate);
+    wetHighL.setLowPass (std::min ((double) highNow, top), rate);
+    wetHighR.setLowPass (std::min ((double) highNow, top), rate);
 }
 
 void Space::setAmount (float a) noexcept
@@ -113,6 +137,12 @@ void Space::process (float* left, float* right, int numSamples) noexcept
         }
 
         aurora.process (sendL.data(), sendR.data(), wetL.data(), wetR.data(), n);
+        updateFilter (n);
+        for (int i = 0; i < n; ++i)
+        {
+            wetL[(size_t) i] = wetHighL.process (wetLowL.process (wetL[(size_t) i]));
+            wetR[(size_t) i] = wetHighR.process (wetLowR.process (wetR[(size_t) i]));
+        }
 
         float loudest = 0.0f;
         for (int i = 0; i < n; ++i)
