@@ -340,11 +340,15 @@ void BloomVoice::buildBins (int from, int to) noexcept
         if (f.gainLeft == 0.0f && f.gainRight == 0.0f)
             continue;
 
-        const uint16_t* fineA = analysis->fine (f.frameA);
-        const uint16_t* fineB = analysis->fine (f.frameB);
-        const float* envA = analysis->envelope (f.frameA);
-        const float* envB = analysis->envelope (f.frameB);
-        const int16_t* peaks = analysis->peaks (f.frameMix < 0.5f ? f.frameA : f.frameB);
+        // The loop can be swapped while a frame is being built (a new loop start, length or
+        // Window), and the new analysis may have fewer frames: keep the indices inside it.
+        const int frames = analysis->numFrames();
+        const int frameA = f.frameA % frames, frameB = f.frameB % frames;
+        const uint16_t* fineA = analysis->fine (frameA);
+        const uint16_t* fineB = analysis->fine (frameB);
+        const float* envA = analysis->envelope (frameA);
+        const float* envB = analysis->envelope (frameB);
+        const int16_t* peaks = analysis->peaks (f.frameMix < 0.5f ? frameA : frameB);
         const float mixB = f.frameMix, mixA = 1.0f - mixB;
         const float gl = f.gainLeft, gr = f.gainRight;
         uint32_t* phase = phases.data() + (size_t) l * (size_t) outBins;

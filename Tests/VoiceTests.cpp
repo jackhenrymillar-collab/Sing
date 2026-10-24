@@ -3,6 +3,7 @@
 #include "TestHelpers.h"
 
 #include "Voice/FormantShifter.h"
+#include "Common/RealFFT.h"
 #include "Voice/PlaceholderVoices.h"
 #include "Voice/SingSynth.h"
 #include "Voice/SourceExchange.h"
@@ -154,17 +155,7 @@ TEST_CASE ("Formant shifter at ratio 1 passes the voice through, delayed")
         int d = 0;
         const auto y = shift (x, period, 1.0f, &d);
 
-        // The shifter's output has a 20 Hz DC blocker, so compare against the input through
-        // the same filter.
-        const float coeff = (float) std::exp (-2.0 * 3.14159265358979 * 20.0 / sr);
-        std::vector<float> expected (x.size());
-        float in1 = 0.0f, out1 = 0.0f;
-        for (size_t i = 0; i < x.size(); ++i)
-        {
-            out1 = x[i] - in1 + coeff * out1;
-            in1 = x[i];
-            expected[i] = out1;
-        }
+        const auto& expected = x;   // exactly, just later
 
         double maxErr = 0.0;
         for (int i = d + 10; i < 48000; ++i)
@@ -177,8 +168,8 @@ TEST_CASE ("Formant shifter at ratio 1 passes the voice through, delayed")
 
 TEST_CASE ("Formant shifter adds no DC offset")
 {
-    // Grains read at a ratio other than 1 each carry a little DC, which used to add up to a
-    // steady offset and a low thump.
+    // The old time-domain shifter's grains each carried a little DC, which added up to a
+    // steady offset and a low thump. The spectral shifter leaves the 0 Hz bin alone.
     const auto x = sine (587.0, 96000);
     for (float ratio : { 0.6f, 0.75f, 1.6f })
     {
@@ -208,8 +199,6 @@ TEST_CASE ("Formant shifter moves the vowel colour and keeps the pitch")
     const double bUp = brightness (up, from, n), bDown = brightness (down, from, n);
     INFO ("brightness: original " << base << ", up " << bUp << ", down " << bDown);
     CHECK (bUp > base * 1.5);
-    // 0.85: before the DC blocker the shifter added a DC offset when moving formants down,
-    // which this measure counted as extra darkness.
     CHECK (bDown < base * 0.85);
 
     CHECK_THAT (detectPitch (up.data() + from, n, sr).hz, WithinAbs (ooh.rootHz, 3.0));
@@ -319,8 +308,7 @@ TEST_CASE ("Synth: a key plays the voice at that pitch")
 TEST_CASE ("Synth: Stretch 0 at the root plays the voice as recorded")
 {
     // With Stretch, Spread and Formant at 0, the note at the root key is the loop itself:
-    // no grains of their own, no resonance. (The formant shifter's 20 Hz DC blocker is the
-    // only change.)
+    // no grains of their own, no resonance.
     auto src = placeholderSource (PlaceholderVowel::ooh);
     SingSynth synth;
     synth.prepare (sr, 256);
@@ -331,19 +319,12 @@ TEST_CASE ("Synth: Stretch 0 at the root plays the voice as recorded")
     synth.noteOn (57, 1.0f);   // A3, the root
     const auto r = renderSynth (synth, 48000);
 
-    const float coeff = (float) std::exp (-2.0 * 3.14159265358979 * 20.0 / sr);
-    float in1 = 0.0f, out1 = 0.0f;
     double err = 0.0, ref = 0.0;
-    for (int i = 0; i < 48000; ++i)
+    for (int i = 4800; i < 48000; ++i)
     {
         const float x = src->channel (0)[i % src->size()];
-        out1 = x - in1 + coeff * out1;
-        in1 = x;
-        if (i >= 4800)
-        {
-            err += std::pow ((double) r.left[(size_t) i] - out1, 2.0);
-            ref += (double) out1 * out1;
-        }
+        err += std::pow ((double) r.left[(size_t) i] - x, 2.0);
+        ref += (double) x * x;
     }
     INFO ("difference " << db (std::sqrt (err / ref)) << " dB below the voice");
     CHECK (std::sqrt (err / ref) < 0.01);   // 40 dB down
@@ -552,4 +533,65 @@ TEST_CASE ("Synth: Formant 0 keeps the vowel colour away from the root")
     INFO ("brightness: root " << atRoot << ", a fifth up " << fifthUp << ", a fifth up with Formant +7 " << fifthUpBright);
     CHECK (fifthUp < atRoot * 1.35);
     CHECK (fifthUpBright > fifthUp * 1.3);
+}
+
+TEST_CASE ("Synth: Keep vowel off is plain pitch shifting")
+{
+    auto src = placeholderSource (PlaceholderVowel::ah);
+    auto play = [&src] (int note, bool keep)
+    {
+        SingSynth synth;
+        synth.prepare (sr, 256);
+        synth.setSource (src.get());
+        auto s = plainSynth (196.0f);
+        s.voice.keepVowel = keep;
+        synth.setSettings (s);
+        synth.noteOn (note, 1.0f);
+        return mono (renderSynth (synth, 72000));
+    };
+
+    // Off, a fifth up sounds brighter (the vowel moved up with the key); on, it doesn't.
+    const double atRoot = brightness (play (55, true), 24000, 48000);
+    const double kept = brightness (play (62, true), 24000, 48000);
+    const double plain = brightness (play (62, false), 24000, 48000);
+    INFO ("brightness: root " << atRoot << ", a fifth up kept " << kept << ", plain " << plain);
+    CHECK (plain > kept * 1.3);
+    CHECK_THAT (detectPitch (play (62, false).data() + 24000, 48000, sr).hz, WithinAbs (196.0 * std::exp2 (7.0 / 12.0), 3.0));
+}
+
+TEST_CASE ("Formant shifter adds no partials of its own")
+{
+    // A steady harmonic vowel, formants moved a fifth either way: all the power stays on the
+    // harmonics (the shifter only reshapes magnitudes).
+    std::vector<float> x (96000);
+    for (size_t i = 0; i < x.size(); ++i)
+    {
+        double v = 0.0;
+        for (int h = 1; h * 220 < 9000; ++h)
+        {
+            const double hz = h * 220.0;
+            v += (std::exp (-std::pow ((hz - 700.0) / 300.0, 2.0)) + 0.3 * std::exp (-std::pow ((hz - 2600.0) / 500.0, 2.0)) + 0.02)
+               * std::sin (6.283185307179586 * hz * (double) i / sr + h);
+        }
+        x[i] = (float) (0.1 * v);
+    }
+    for (const float ratio : { 0.75f, 1.5f })
+    {
+        const auto y = shift (x, (float) (sr / 220.0), ratio);
+        constexpr int size = 16384;
+        sing::RealFFT fft (size);
+        std::vector<float> frame ((size_t) size), spectrum ((size_t) size + 2);
+        for (int i = 0; i < size; ++i)
+            frame[(size_t) i] = y[(size_t) (48000 + i)] * (float) (0.5 - 0.5 * std::cos (6.283185307179586 * i / size));
+        fft.forward (frame.data(), spectrum.data());
+        double on = 0.0, off = 0.0;
+        for (int k = 1; k < size / 2; ++k)
+        {
+            const double hz = k * sr / size;
+            const double p = (double) spectrum[(size_t) (2 * k)] * spectrum[(size_t) (2 * k)] + (double) spectrum[(size_t) (2 * k + 1)] * spectrum[(size_t) (2 * k + 1)];
+            (std::abs (hz - 220.0 * std::round (hz / 220.0)) < 10.0 ? on : off) += p;
+        }
+        INFO ("ratio " << ratio << ": off the harmonics " << db (std::sqrt (off / on)) << " dB");
+        CHECK (off < on * 1.0e-4);   // 40 dB down
+    }
 }

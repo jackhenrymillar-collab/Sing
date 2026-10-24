@@ -218,6 +218,9 @@ SingPanel::SingPanel (SingProcessor& p)
     addAndMakeVisible (holdButton);
     buttonAttachments.push_back (std::make_unique<ButtonAttachment> (state, ParamID::hold, holdButton));
     holdButton.setTooltip ("Freeze the pad: it holds still for as long as the key is down");
+    addAndMakeVisible (keepVowelButton);
+    buttonAttachments.push_back (std::make_unique<ButtonAttachment> (state, ParamID::keepVowel, keepVowelButton));
+    keepVowelButton.setTooltip ("On: the vowel stays as recorded on every key. Off: plain pitch shifting, so higher keys sound smaller and lower keys larger");
 
     // The engine: Grain or Bloom.
     const auto engines = engineNames();
@@ -317,7 +320,7 @@ void SingPanel::setBypassed (bool shouldBypass)
     // Dim the controls while bypassed; they still work.
     const float alpha = bypassed ? 0.45f : 1.0f;
     for (auto* c : std::initializer_list<juce::Component*> { voiceInfo.get(), &waveform, &loopStart, &loopLength, &loopFade,
-                                                             &holdButton, &voicesDragger, &glideDragger, &outputDragger,
+                                                             &holdButton, &keepVowelButton, &voicesDragger, &glideDragger, &outputDragger,
                                                              &windowDragger, &shiftDragger, &smearDragger, &toneDragger })
         c->setAlpha (alpha);
     for (auto& b : directionButtons)
@@ -630,6 +633,7 @@ void SingPanel::resized()
         b->setBounds (juce::Rectangle<float> (ex, 556.0f, w, 40.0f).toNearestInt());
         ex += w + 6.0f;
     }
+    keepVowelButton.setBounds (juce::Rectangle<float> (ex + 16.0f, 556.0f, keepVowelButton.preferredWidth(), 40.0f).toNearestInt());
     // Bloom's row, between the knobs and the bottom row: shown only while Bloom is on.
     ex = 40.0f;
     for (auto [d, widest] : { std::pair { &windowDragger, juce::String ("680 ms") }, std::pair { &shiftDragger, juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92" "500 Hz")) }, std::pair { &smearDragger, juce::String ("100%") },
@@ -685,6 +689,8 @@ void SingPanel::paint (juce::Graphics& g)
     // Hold's glow, like a CSS box-shadow under the lit pill, and the lit engine's.
     if (holdButton.getToggleState())
         drawGlow (g, holdButton.getBounds().toFloat(), 20.0f, 16.0f, Colours::gold.withAlpha (0.5f));
+    if (keepVowelButton.getToggleState())
+        drawGlow (g, keepVowelButton.getBounds().toFloat(), 20.0f, 12.0f, Colours::gold.withAlpha (0.3f));
     for (auto& b : engineButtons)
         if (b->getToggleState())
             drawGlow (g, b->getBounds().toFloat(), 20.0f, 12.0f, Colours::gold.withAlpha (0.3f));

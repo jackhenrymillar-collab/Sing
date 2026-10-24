@@ -1,6 +1,7 @@
 #pragma once
 
-#include <array>
+#include "Common/RealFFT.h"
+
 #include <vector>
 
 namespace sing
@@ -8,74 +9,70 @@ namespace sing
 
 // Moves a voice's formants (its vowel colour) up or down without changing its pitch.
 //
-// Pitch-synchronous overlap-add (TD-PSOLA, Moulines and Charpentier, 1990): the input is cut
-// into Hann-windowed grains two pitch periods long, one per period. Each grain is read faster
-// or slower by the formant ratio, which squeezes or stretches its spectral envelope, and is
-// laid back down one period apart, which keeps the pitch. At ratio 1 the output is the input,
-// delayed by latency() samples.
+// A spectral envelope shifter, in the style of Röbel and Rodet ("Efficient spectral envelope
+// estimation and its application to pitch shifting and envelope preservation", DAFx 2005):
 //
-// The pitch period is known (it is the voice's root period at the note's pitch), so no
-// pitch marks need finding. For breathy or unpitched voices, short fixed grains (5 ms) do
-// the same job: resampling a noise grain shifts its spectral envelope by the same ratio.
+// 1. Analysis: the input is cut into Hann-windowed frames (at least four pitch periods long,
+//    a new one every quarter frame) and FFT'd.
+// 2. Separation: each frame's spectral envelope (the vowel: formants and timbre) is traced
+//    through the tops of the harmonics (a running maximum over about one and a half
+//    harmonics, then smoothed). What lies under it, the harmonics and breath, is the
+//    excitation.
+// 3. Reshaping: the envelope is read at frequency / ratio, so it moves up (ratio > 1) or down,
+//    and each bin is multiplied by new envelope / old envelope. Only magnitudes change: the
+//    harmonics keep their frequencies and phases, so no new partials appear and the pitch
+//    stays exactly where it was.
+// 4. Reconstruction: inverse FFT, Hann window again, overlap-add.
 //
-// Real-time safe after prepare().
+// The voice does the pitch shifting itself (by reading the loop faster or slower), which
+// moves the envelope along with the harmonics; this shifter then puts the envelope back where
+// the Formant setting wants it.
+//
+// At ratio 1 the output is the input, delayed by latency() samples. Real-time safe after
+// prepare().
 class FormantShifter
 {
 public:
     static constexpr float minRatio = 0.5f;
     static constexpr float maxRatio = 2.0f;
-    static constexpr float unpitchedGrainSeconds = 0.005f;
 
-    FormantShifter();
+    FormantShifter() = default;
 
-    // maxPeriodSeconds: the longest pitch period it will be asked to follow (20 ms is 50 Hz).
+    // maxPeriodSeconds: the longest pitch period it will be asked to follow (25 ms is 40 Hz).
     void prepare (double sampleRate, float maxPeriodSeconds = 0.025f);
 
-    // Starts a note. periodSamples is the pitch period at the note's pitch (0 if unpitched).
-    // Returns the latency in samples for this note.
+    // Starts a note. periodSamples is the pitch period at the note's pitch (0 if unpitched);
+    // it sets the frame length, which then stays for the note. Returns the latency in samples.
     int start (float periodSamples, float ratio) noexcept;
 
     // Follows a changing pitch (glide, bend) and formant setting.
     void setPeriod (float periodSamples) noexcept;
     void setRatio (float ratio) noexcept;
 
-    int latency() const noexcept { return delay; }
+    int latency() const noexcept { return size; }
 
     // Reads numSamples from inLeft/inRight and writes the shifted audio to outLeft/outRight.
     // In and out may be the same buffers. Pass inRight == nullptr for mono.
     void process (const float* inLeft, const float* inRight, float* outLeft, float* outRight, int numSamples) noexcept;
 
 private:
-    struct Grain
-    {
-        bool active = false;
-        double centre = 0.0;     // output time of the grain's centre
-        float halfLength = 1.0f; // one period
-        float ratio = 1.0f;
-    };
-
-    float periodFor (float requested) const noexcept;
-    void scheduleGrains() noexcept;
-    float read (const std::vector<float>& ring, double inputTime) const noexcept;
+    void processFrame() noexcept;
+    void traceEnvelope() noexcept;
 
     double rate = 48000.0;
-    int ringSize = 0, ringMask = 0;
-    std::vector<float> ringL, ringR;
+    int minSize = 1024, maxSize = 4096;
+    int size = 1024, hop = 256, rover = 0;
+    float period = 0.0f, ratio = 1.0f;
+    bool stereo = false;
 
-    int delay = 0;
-    float period = 240.0f, maxPeriod = 1200.0f, targetRatio = 1.0f;
-    long long now = 0;             // samples processed since start()
-    double nextCentre = 0.0;
-    std::array<Grain, 8> grains {};
-
-    static constexpr int windowSize = 1024;
-    std::vector<float> window;
-
-    // A 20 Hz DC blocker on the output. Grains read at a ratio other than 1 are no longer
-    // a whole number of cycles under their window, so each one carries a little DC; laid
-    // one period apart they add up to a steady offset (a low thump when notes change).
-    float dcCoeff = 0.997f;
-    float dcInL = 0.0f, dcOutL = 0.0f, dcInR = 0.0f, dcOutR = 0.0f;
+    std::vector<RealFFT> ffts;   // one per size from minSize to maxSize
+    RealFFT* fft = nullptr;
+    std::vector<float> window;   // Hann for the current size, scaled for 4x overlap-add
+    std::vector<float> inL, inR, outL, outR, accL, accR;
+    std::vector<float> specL, specR, frame;
+    std::vector<float> power, envelope, logUpper, gains;
+    std::vector<double> prefix;
+    std::vector<int> queue;
 };
 
 } // namespace sing
