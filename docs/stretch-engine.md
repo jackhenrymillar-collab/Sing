@@ -4,7 +4,7 @@ Sing's Stretch turns a short vocal loop into an endless pad by replaying it in s
 overlapping grains. This page describes the granular engine and where the second engine,
 Bloom, will plug in.
 
-The code is plain C++17 in `Source/DSP/Stretch`, with no JUCE dependency, so it builds and is
+The code is plain C++ (C++20) in `Source/DSP/Stretch`, with no JUCE dependency, so it builds and is
 tested on any machine. The plugin links it as the `SingDSP` library.
 
 ## Pieces
@@ -83,8 +83,8 @@ These are starting values to tune by ear.
 lock. Each engine has a fixed pool of 64 grains.
 
 16 notes at overlap 4 use about 5 % of one core (measured on the cloud Linux build machine, -O2,
-not a Mac). Spread's copies multiply this, so Spread at 7 should share grain reads between
-copies when it is built.
+not a Mac). Spread's copies multiply this (see [voices-spread-formant.md](voices-spread-formant.md));
+sharing grain reads between Spread copies is the next saving to make.
 
 ## Adding Bloom
 

@@ -1,0 +1,77 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  macos:
+    name: macOS (VST3 + AU, universal)
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release -j 4
+
+      - name: DSP tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Check universal binary
+        run: lipo -info "build/Sing_artefacts/Release/VST3/Sing.vst3/Contents/MacOS/Sing"
+
+      - name: Validate AU with auval
+        run: |
+          killall -9 AudioComponentRegistrar || true
+          auval -v aumu Sng1 Ovca
+
+      - name: Validate VST3 and AU with pluginval
+        run: |
+          curl -sSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip
+          unzip -q pluginval.zip
+          PV=pluginval.app/Contents/MacOS/pluginval
+          $PV --strictness-level 10 --validate-in-process "build/Sing_artefacts/Release/VST3/Sing.vst3"
+          $PV --strictness-level 10 --validate-in-process "$HOME/Library/Audio/Plug-Ins/Components/Sing.component"
+
+      - name: Package plugins
+        run: |
+          mkdir -p dist
+          cp -R "build/Sing_artefacts/Release/VST3/Sing.vst3" dist/
+          cp -R "$HOME/Library/Audio/Plug-Ins/Components/Sing.component" dist/
+          cp -R "build/Sing_artefacts/Release/Standalone/Sing.app" dist/
+          cat > dist/INSTALL.txt <<'TXT'
+          Sing (unsigned development build)
+
+          1. Copy Sing.vst3 to      ~/Library/Audio/Plug-Ins/VST3/
+             Copy Sing.component to ~/Library/Audio/Plug-Ins/Components/
+          2. These builds aren't notarised yet, so macOS blocks them. In Terminal run:
+               xattr -cr ~/Library/Audio/Plug-Ins/VST3/Sing.vst3
+               xattr -cr ~/Library/Audio/Plug-Ins/Components/Sing.component
+          3. Restart your DAW and rescan plug-ins.
+          TXT
+          cp THIRD_PARTY_NOTICES.md dist/
+          ditto -c -k --keepParent dist Sing-macOS.zip
+
+      - name: Upload plugins
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sing-macOS
+          path: Sing-macOS.zip
+          retention-days: 30
+
+  linux-tests:
+    name: Linux (DSP tests)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DSING_BUILD_PLUGIN=OFF -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j 4
+      - name: DSP tests
+        run: ctest --test-dir build --output-on-failure
