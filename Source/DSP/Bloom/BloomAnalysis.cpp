@@ -20,6 +20,24 @@ constexpr int minSize = 1024;
 constexpr int maxFrames = 384;           // caps memory for very long loops
 constexpr double pi = 3.14159265358979323846;
 
+// Peaks closer than this to a stronger one are its vibrato sidebands: 3 % of the frequency,
+// and at least 8 Hz (set in bins below).
+constexpr float vibratoReach = 0.03f;
+
+// The magnitude of a Hann window's spectrum, d bins from its centre, relative to the centre:
+// the main lobe, two bins either side.
+double hannLobe (double d) noexcept
+{
+    d = std::abs (d);
+    if (d >= 2.0)
+        return 0.0;
+    if (d < 1.0e-6)
+        return 1.0;
+    if (std::abs (d - 1.0) < 1.0e-6)
+        return 0.5;
+    return std::abs (std::sin (pi * d) / (pi * d) / (1.0 - d * d));
+}
+
 uint16_t encode (float value) noexcept
 {
     const float l = (std::log (std::max (value, 1.0e-30f)) + logOffset) * logScale;
@@ -81,8 +99,8 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
     }
     const float density = (float) (1.0 / std::sqrt (windowPower));
 
-    // Envelope smoothing: wider than the gap between harmonics, so it follows the vowel and
-    // not the individual harmonics.
+    // Envelope widths: wider than the gap between harmonics, so the envelope follows the
+    // vowel and not the individual harmonics.
     const float pitchHz = source.settings().pitchPeriod > 0.0f ? (float) source.sampleRate() / source.settings().pitchPeriod : 0.0f;
     const float smoothHz = std::max (200.0f, 1.5f * pitchHz);
     const int halfWidth = std::max (1, (int) std::lround (0.5f * smoothHz / a->binSpacing));
@@ -91,8 +109,12 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
     std::vector<float> frame ((size_t) n), spectrum ((size_t) n + 2), mag ((size_t) bins), logMag ((size_t) bins),
         env ((size_t) bins);
     std::vector<double> prefix ((size_t) bins + 1);
+    std::vector<int> peakList, owner ((size_t) bins), maxQueue ((size_t) bins);
+    std::vector<float> floorEnv ((size_t) bins), logUpper ((size_t) bins);
+    const int minReachBins = std::max (1, (int) std::ceil (8.0f / a->binSpacing));
     a->fineData.resize ((size_t) a->frames * (size_t) bins);
     a->envData.resize ((size_t) a->frames * envelopePoints);
+    a->peakData.assign ((size_t) a->frames * (size_t) bins, noPeak);
 
     const int channels = source.numChannels();
     for (int f = 0; f < a->frames; ++f)
@@ -119,7 +141,8 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
         }
         const float floor = std::max (peak * 1.0e-6f, 1.0e-12f);
 
-        // Moving average of log magnitude.
+        // The floor: a moving average of log magnitude, which sits between the harmonics.
+        // Harmonics are found against it.
         prefix[0] = 0.0;
         for (int k = 0; k < bins; ++k)
         {
@@ -129,7 +152,104 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
         for (int k = 0; k < bins; ++k)
         {
             const int lo = std::max (0, k - halfWidth), hi = std::min (bins, k + halfWidth + 1);
+            floorEnv[(size_t) k] = std::exp ((float) ((prefix[(size_t) hi] - prefix[(size_t) lo]) / (hi - lo)));
+        }
+
+        // The envelope: the shape through the tops of the harmonics (a running maximum,
+        // then smoothed). Taking the average instead would sink between harmonics, by an
+        // amount that depends on where they fall, and moving the harmonics against it would
+        // make some notes far louder than others.
+        {
+            int head = 0, tail = 0;   // a queue of bins with falling magnitudes
+            int next = 0;
+            for (int k = 0; k < bins; ++k)
+            {
+                const int hi = std::min (bins - 1, k + halfWidth);
+                for (; next <= hi; ++next)
+                {
+                    while (tail > head && mag[(size_t) maxQueue[(size_t) tail - 1]] <= mag[(size_t) next])
+                        --tail;
+                    maxQueue[(size_t) tail++] = next;
+                }
+                while (maxQueue[(size_t) head] < k - halfWidth)
+                    ++head;
+                logUpper[(size_t) k] = std::log (mag[(size_t) maxQueue[(size_t) head]] + floor);
+            }
+        }
+        prefix[0] = 0.0;
+        for (int k = 0; k < bins; ++k)
+            prefix[(size_t) k + 1] = prefix[(size_t) k] + logUpper[(size_t) k];
+        float loudest = 0.0f;
+        for (int k = 0; k < bins; ++k)
+        {
+            const int lo = std::max (0, k - halfWidth), hi = std::min (bins, k + halfWidth + 1);
             env[(size_t) k] = std::exp ((float) ((prefix[(size_t) hi] - prefix[(size_t) lo]) / (hi - lo)));
+            loudest = std::max (loudest, env[(size_t) k]);
+        }
+        // Where the voice has next to nothing (above its top harmonics, say), the envelope is
+        // nearly zero and the fine structure, divided by it, would be loud noise. Moved by the
+        // pitch to where the envelope is high, that noise would be heard. Keep the envelope
+        // within 60 dB of its loudest point.
+        for (int k = 0; k < bins; ++k)
+            env[(size_t) k] = std::max (env[(size_t) k], loudest * 1.0e-3f);
+
+        // Harmonics: local maxima standing at least 6 dB over the envelope. Vibrato splits a
+        // harmonic into several close peaks (sidebands a few Hz apart, since the window is
+        // long), and played back steadily those beat against each other at the vibrato rate.
+        // So peaks within reach of a stronger one join it, and each harmonic is redrawn as
+        // one clean main lobe of the analysis window, at the centre of its energy, holding
+        // all of it. What is left between harmonics stays as noise, with random phases.
+        peakList.clear();
+        for (int k = 2; k < bins - 2; ++k)
+        {
+            const float m = mag[(size_t) k];
+            if (m >= 2.0f * floorEnv[(size_t) k] && m > mag[(size_t) k - 1] && m >= mag[(size_t) k + 1])
+                peakList.push_back (k);
+        }
+        std::sort (peakList.begin(), peakList.end(), [&] (int x, int y) { return mag[(size_t) x] > mag[(size_t) y]; });
+
+        std::fill (owner.begin(), owner.end(), -1);
+        auto* peaks = a->peakData.data() + (size_t) f * (size_t) bins;
+        for (const int k : peakList)
+        {
+            if (owner[(size_t) k] >= 0)
+                continue;   // a sideband of a stronger harmonic
+            const int reach = std::max (minReachBins, (int) std::ceil (vibratoReach * (float) k));
+            int lo = k, hi = k;
+            while (lo > 1 && k - lo < reach && owner[(size_t) lo - 1] < 0)
+                --lo;
+            while (hi < bins - 2 && hi - k < reach && owner[(size_t) hi + 1] < 0)
+                ++hi;
+
+            // The harmonic's energy over the noise floor between harmonics, and its centre.
+            float floorMag = mag[(size_t) lo];
+            for (int b = lo; b <= hi; ++b)
+                floorMag = std::min (floorMag, mag[(size_t) b]);
+            double energy = 0.0, moment = 0.0;
+            for (int b = lo; b <= hi; ++b)
+            {
+                owner[(size_t) b] = k;
+                const double e = (double) mag[(size_t) b] * mag[(size_t) b] - (double) floorMag * floorMag;
+                energy += e;
+                moment += e * b;
+            }
+            const double middle = energy > 0.0 ? moment / energy : (double) k;
+
+            // Redraw: the noise floor everywhere, plus the main lobe at the centre.
+            double lobePower = 0.0;
+            for (int b = lo; b <= hi; ++b)
+            {
+                const double w = hannLobe ((double) b - middle);
+                lobePower += w * w;
+            }
+            const double amp = lobePower > 0.0 ? std::sqrt (energy / lobePower) : 0.0;
+            for (int b = lo; b <= hi; ++b)
+            {
+                const double w = hannLobe ((double) b - middle);
+                mag[(size_t) b] = (float) std::sqrt ((double) floorMag * floorMag + amp * amp * w * w);
+                if (w > 0.0)
+                    peaks[b] = (int16_t) std::clamp (std::lround ((middle - (double) b) * peakScale), -32767L, 32767L);
+            }
         }
 
         auto* fine = a->fineData.data() + (size_t) f * (size_t) bins;

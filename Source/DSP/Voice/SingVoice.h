@@ -124,7 +124,10 @@ private:
 
     void renderSubBlock (float* left, float* right, int numSamples) noexcept;
     void applyEnvelope (float* left, float* right, int numSamples) noexcept;
-    void renderBloom (int numSamples, const std::array<CopyShape, (size_t) maxCopies>& shapes, float norm) noexcept;
+    // Fills each copy's shape for a Spread setting; returns the gain that keeps their
+    // total power at 1.
+    static float copyShapes (float spread, std::array<CopyShape, (size_t) maxCopies>& shapes) noexcept;
+    BloomVoice::Parameters bloomParameters (const std::array<CopyShape, (size_t) maxCopies>& shapes, float norm) const noexcept;
     void startCopy (int index) noexcept;
     float targetSemitones() const noexcept;
     float pitchRatio (int copy) const noexcept;

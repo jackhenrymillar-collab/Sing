@@ -157,6 +157,7 @@ if (SING_BUILD_TESTS)
     FetchContent_MakeAvailable (Catch2)
 
     add_executable (SingDSPTests
+        Tests/BloomTests.cpp
         Tests/StretchTests.cpp
         Tests/VoiceTests.cpp)
     target_link_libraries (SingDSPTests PRIVATE SingDSP Catch2::Catch2WithMain)

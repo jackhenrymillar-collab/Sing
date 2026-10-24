@@ -166,6 +166,9 @@ void SingVoice::start (const LoopSource& src, int midiNote, float velocity, cons
     bloomNote = settings.mode == StretchMode::bloom && BloomVoice::canPlay (src);
     if (bloomNote)
     {
+        std::array<CopyShape, (size_t) maxCopies> shapes {};
+        const float norm = copyShapes (settings.spread, shapes);
+        bloom.setParameters (bloomParameters (shapes, norm));
         bloom.start (src, 0.0, seedBase * 2654435761u, (float) (seedBase % 97u) / 97.0f);
         return;
     }
@@ -337,20 +340,15 @@ void SingVoice::renderSubBlock (float* left, float* right, int n) noexcept
 
     // Spread: work out each copy's share, normalised so the copies add up to the same power.
     std::array<CopyShape, (size_t) maxCopies> shapes {};
-    float power = 0.0f;
-    for (int i = 0; i < maxCopies; ++i)
-    {
-        shapes[(size_t) i] = copyShape (i, voiceSettings.spread);
-        power += shapes[(size_t) i].weight * shapes[(size_t) i].weight;
-    }
-    const float norm = 1.0f / std::sqrt (std::max (power, 1.0e-6f));
+    const float norm = copyShapes (voiceSettings.spread, shapes);
 
     std::fill_n (mixLeft.data(), n, 0.0f);
     std::fill_n (mixRight.data(), n, 0.0f);
 
     if (bloomNote)
     {
-        renderBloom (n, shapes, norm);
+        bloom.setParameters (bloomParameters (shapes, norm));
+        bloom.render (mixLeft.data(), mixRight.data(), n);
         applyEnvelope (left, right, n);
         return;
     }
@@ -422,7 +420,18 @@ void SingVoice::applyEnvelope (float* left, float* right, int n) noexcept
         stop();
 }
 
-void SingVoice::renderBloom (int n, const std::array<CopyShape, (size_t) maxCopies>& shapes, float norm) noexcept
+float SingVoice::copyShapes (float spread, std::array<CopyShape, (size_t) maxCopies>& shapes) noexcept
+{
+    float power = 0.0f;
+    for (int i = 0; i < maxCopies; ++i)
+    {
+        shapes[(size_t) i] = copyShape (i, spread);
+        power += shapes[(size_t) i].weight * shapes[(size_t) i].weight;
+    }
+    return 1.0f / std::sqrt (std::max (power, 1.0e-6f));
+}
+
+BloomVoice::Parameters SingVoice::bloomParameters (const std::array<CopyShape, (size_t) maxCopies>& shapes, float norm) const noexcept
 {
     constexpr float halfPi = 1.57079632679f;
     BloomVoice::Parameters p;
@@ -431,7 +440,8 @@ void SingVoice::renderBloom (int n, const std::array<CopyShape, (size_t) maxCopi
     // Bloom moves the envelope separately from the pitch, so Formant 0 needs no
     // compensation to keep the recorded vowel on every key.
     p.formantRatio = std::exp2 (voiceSettings.formantSemitones / 12.0f);
-    p.width = 0.45f + 0.55f * voiceSettings.spread;
+    // Some width even at Spread 0, but little enough that the note holds up in mono.
+    p.width = 0.3f + 0.7f * voiceSettings.spread;
     p.numLayers = 0;
     for (int i = 0; i < maxCopies; ++i)
     {
@@ -445,8 +455,7 @@ void SingVoice::renderBloom (int n, const std::array<CopyShape, (size_t) maxCopi
         layer.gainRight = shape.weight * norm * std::sin (theta) * 1.41421356f;
         layer.offsetSeconds = (double) i * copyOffsetSeconds;
     }
-    bloom.setParameters (p);
-    bloom.render (mixLeft.data(), mixRight.data(), n);
+    return p;
 }
 
 } // namespace sing
