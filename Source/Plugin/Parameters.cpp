@@ -33,6 +33,22 @@ juce::String formatSemitones (float st)
 
 juce::String formatPercent (float p) { return juce::String (juce::roundToInt (p)) + "%"; }
 
+juce::String formatShift (float hz)
+{
+    const int r = juce::roundToInt (hz);
+    if (r == 0)
+        return "0 Hz";
+    return (r > 0 ? juce::String ("+") : juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"))) + juce::String (std::abs (r)) + " Hz";
+}
+
+juce::String formatTone (float t)
+{
+    const int r = juce::roundToInt (t);
+    if (r == 0)
+        return "Even";
+    return (r > 0 ? juce::String ("Pure ") : juce::String ("Breath ")) + juce::String (std::abs (r));
+}
+
 juce::String formatGlide (float ms)
 {
     return ms < 995.0f ? juce::String (juce::roundToInt (ms)) + " ms" : juce::String (ms / 1000.0f, 1) + " s";
@@ -89,6 +105,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::engine, v }, "Engine", engineNames(), 0));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::air, v }, "Air", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatPercent)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::space, v }, "Space", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatPercent)));
+    // Added with Bloom's spectral controls; 0 leaves the sound as before.
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::shift, v }, "Shift", Range { -500.0f, 500.0f, 1.0f }, 0.0f, withText (formatShift)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::smear, v }, "Smear", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::window, v }, "Window", skewed (0.1f, 1.4f, 0.68f), 0.68f, withText (formatSeconds)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::tone, v }, "Tone", Range { -100.0f, 100.0f, 1.0f }, 0.0f, withText (formatTone)));
     // Also the host's bypass switch (see SingProcessor::getBypassParameter). Clicking the evening star toggles it.
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::bypass, v }, "Bypass", false));
 

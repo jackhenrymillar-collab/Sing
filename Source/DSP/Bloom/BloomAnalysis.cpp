@@ -15,7 +15,6 @@ namespace
 // about 0.004 dB over a range of e^-16 to e^16, far finer than anyone can hear.
 constexpr float logOffset = 16.0f;
 constexpr float logScale = 2048.0f;
-constexpr double targetSeconds = 0.68;   // 32768 samples at 48 kHz
 constexpr int minSize = 1024;
 constexpr int maxFrames = 384;           // caps memory for very long loops
 constexpr double pi = 3.14159265358979323846;
@@ -57,10 +56,10 @@ const float* BloomAnalysis::decodeTable() noexcept
     return table->data();
 }
 
-int BloomAnalysis::chooseSize (int bufferSize, double sampleRate) noexcept
+int BloomAnalysis::chooseSize (int bufferSize, double sampleRate, double windowSeconds) noexcept
 {
-    // The power of two nearest to the target length...
-    const double target = targetSeconds * sampleRate;
+    // The power of two nearest to the window length...
+    const double target = std::clamp (windowSeconds, minWindowSeconds, maxWindowSeconds) * sampleRate;
     int size = minSize;
     while ((double) size * 1.414 < target)
         size *= 2;
@@ -78,7 +77,7 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
         return nullptr;
 
     auto a = std::make_shared<BloomAnalysis>();
-    a->size = chooseSize (length, source.sampleRate());
+    a->size = chooseSize (length, source.sampleRate(), source.settings().bloomWindowSeconds);
     a->bins = a->size / 2 + 1;
     a->binSpacing = (float) (source.sampleRate() / a->size);
     a->envSpacing = (float) (source.sampleRate() * 0.5 / (envelopePoints - 1));
@@ -201,9 +200,10 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
         // So peaks within reach of a stronger one join it, and each harmonic is redrawn as
         // one clean main lobe of the analysis window, at the centre of its energy, holding
         // all of it. What is left between harmonics stays as noise, with random phases.
-        // With harmonics unlocked (the classic method) the spectrum is kept exactly as it is.
+        // With harmonics unlocked (the classic method) the harmonics are still found, so the
+        // Tone control can tell them from the noise, but the spectrum is kept exactly as it is.
         peakList.clear();
-        for (int k = 2; lockHarmonics && k < bins - 2; ++k)
+        for (int k = 2; k < bins - 2; ++k)
         {
             const float m = mag[(size_t) k];
             if (m >= 2.0f * floorEnv[(size_t) k] && m > mag[(size_t) k - 1] && m >= mag[(size_t) k + 1])
@@ -237,6 +237,15 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
                 moment += e * b;
             }
             const double middle = energy > 0.0 ? moment / energy : (double) k;
+
+            if (! lockHarmonics)
+            {
+                // Classic: just mark the harmonic's main lobe as tonal.
+                for (int b = lo; b <= hi; ++b)
+                    if (std::abs ((double) b - middle) < 2.0)
+                        peaks[b] = (int16_t) std::clamp (std::lround ((middle - (double) b) * peakScale), -32767L, 32767L);
+                continue;
+            }
 
             // Redraw: the noise floor everywhere, plus the main lobe at the centre.
             double lobePower = 0.0;

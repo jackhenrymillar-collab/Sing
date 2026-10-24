@@ -23,6 +23,11 @@ struct VoiceSettings
     float glideSeconds = 0.0f;
     float pitchBendSemitones = 0.0f;
 
+    // Bloom's spectral controls (granular ignores them).
+    float shiftHz = 0.0f;            // Shift: every partial moved by this many Hz, -500 to +500
+    float smear = 0.0f;              // Smear: frequency spread, 0 to 1
+    float tone = 0.0f;               // Tone: -1 breath and noise only, 0 as recorded, +1 harmonics only
+
     // The voice's root pitch. Unpitched voices (breaths) still map keys from rootHz, but the
     // formant shifter uses short fixed grains instead of following the period.
     float rootHz = 261.63f;

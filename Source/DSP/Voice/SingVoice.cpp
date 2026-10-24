@@ -442,6 +442,9 @@ BloomVoice::Parameters SingVoice::bloomParameters (const std::array<CopyShape, (
     p.formantRatio = std::exp2 (voiceSettings.formantSemitones / 12.0f);
     // Some width even at Spread 0, but little enough that the note holds up in mono.
     p.width = 0.3f + 0.7f * voiceSettings.spread;
+    p.shiftHz = voiceSettings.shiftHz;
+    p.blur = voiceSettings.smear;
+    p.tone = voiceSettings.tone;
     p.numLayers = 0;
     for (int i = 0; i < maxCopies; ++i)
     {

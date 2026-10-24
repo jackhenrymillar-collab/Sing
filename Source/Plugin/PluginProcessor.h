@@ -154,6 +154,9 @@ private:
     std::atomic<float>* engine = nullptr;
     std::atomic<float>* airAmount = nullptr;
     std::atomic<float>* spaceAmount = nullptr;
+    std::atomic<float>* shiftHz = nullptr;
+    std::atomic<float>* smear = nullptr;
+    std::atomic<float>* tone = nullptr;
     juce::AudioProcessorParameter* bypassParam = nullptr;
 
     // Output level and bypass ramp smoothly.

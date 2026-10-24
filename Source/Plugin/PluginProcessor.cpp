@@ -8,7 +8,7 @@ namespace
 {
     // Parameters that change the loop itself, which is rebuilt off the audio thread. The
     // engine is one: Bloom needs its analysis built with the loop.
-    constexpr const char* kLoopIds[] = { ParamID::loopStart, ParamID::loopLength, ParamID::loopFade, ParamID::direction, ParamID::engine };
+    constexpr const char* kLoopIds[] = { ParamID::loopStart, ParamID::loopLength, ParamID::loopFade, ParamID::direction, ParamID::engine, ParamID::window };
     constexpr int kRebuildHz = 30;
 }
 
@@ -31,6 +31,9 @@ SingProcessor::SingProcessor()
     engine  = state.getRawParameterValue (ParamID::engine);
     airAmount   = state.getRawParameterValue (ParamID::air);
     spaceAmount = state.getRawParameterValue (ParamID::space);
+    shiftHz = state.getRawParameterValue (ParamID::shift);
+    smear = state.getRawParameterValue (ParamID::smear);
+    tone = state.getRawParameterValue (ParamID::tone);
     bypassParam = state.getParameter (ParamID::bypass);
 
     for (auto* id : kLoopIds)
@@ -122,6 +125,7 @@ void SingProcessor::rebuildLoop()
     loop.pitchPeriod = v->isPitched() ? (float) (v->getSampleRate() / v->rootHz()) : 0.0f;
     loop.pitchTrack = v->getPitchTrack();
     loop.analyseForBloom = juce::roundToInt (value (ParamID::engine)) == 1;
+    loop.bloomWindowSeconds = value (ParamID::window);
 
     builder.request ({ v, loop, from, length });
 }
@@ -228,6 +232,9 @@ SynthSettings SingProcessor::readSettings() const noexcept
     s.voice.formantSemitones = formant->load();
     s.voice.hold = hold->load() > 0.5f;
     s.voice.glideSeconds = glide->load() * 0.001f;
+    s.voice.shiftHz = shiftHz->load();
+    s.voice.smear = smear->load() * 0.01f;
+    s.voice.tone = tone->load() * 0.01f;
     s.voice.rootHz = rootHz.load();
     s.voice.pitched = rootPitched.load();
     s.polyphony = juce::roundToInt (voices->load());

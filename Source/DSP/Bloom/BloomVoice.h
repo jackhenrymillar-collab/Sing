@@ -61,6 +61,10 @@ public:
         float formantRatio = 1.0f;      // >1 moves the vowel up; 1 keeps the recorded vowel
         float width = 0.5f;             // 0: left and right share phases; 1: independent phases
         float onsets = 1.0f;            // 0: stretch transients like everything else; 1: pass them at the recorded speed
+        // The spectral modules, applied to the bins before the inverse FFT:
+        float shiftHz = 0.0f;           // frequency shift: moves every partial by this many Hz (inharmonic)
+        float blur = 0.0f;              // frequency spread, 0 to 1: smears each bin over nearby frequencies
+        float tone = 0.0f;              // -1: noise and breath only; 0: as recorded; 1: harmonics only
         int numLayers = 1;
         std::array<Layer, maxLayers> layers {};
     };
@@ -96,6 +100,7 @@ private:
         int frameA = 0, frameB = 0;
         float frameMix = 0.0f;
         float binScale = 1.0f;   // output bin -> analysis bin, for harmonics
+        float shiftBins = 0.0f, noiseShiftBins = 0.0f;   // the frequency shift, in analysis bins
         float noiseScale = 1.0f; // the same for breath and noise (no pitch on a pitched voice)
         float amplitude = 0.0f, tonalAmplitude = 0.0f;   // noise and harmonics
         float gainLeft = 0.0f, gainRight = 0.0f;

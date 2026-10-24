@@ -238,6 +238,8 @@ SingPanel::SingPanel (SingProcessor& p)
             bloomEngine = juce::roundToInt (value) == 1;
             for (int i = 0; i < 2; ++i)
                 engineButtons[(size_t) i]->setToggleState (i == (bloomEngine ? 1 : 0), juce::dontSendNotification);
+            for (auto* d : { &windowDragger, &shiftDragger, &smearDragger, &toneDragger })
+                d->setVisible (bloomEngine);
             if (! motion)
                 bloomMix = bloomEngine ? 1.0f : 0.0f;
             repaint();
@@ -252,6 +254,22 @@ SingPanel::SingPanel (SingProcessor& p)
     outputDragger.formatValue = [] (double v) { return formatDecibels (static_cast<float> (v)); };
     for (auto [d, id] : { std::pair { &voicesDragger, ParamID::voices }, std::pair { &glideDragger, ParamID::glide }, std::pair { &outputDragger, ParamID::output } })
         d->setDoubleClickReturnValue (true, defaultValueOf (state, id));
+    for (auto* d : { &windowDragger, &shiftDragger, &smearDragger, &toneDragger })
+        addChildComponent (d);
+    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::window, windowDragger));
+    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::shift, shiftDragger));
+    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::smear, smearDragger));
+    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::tone, toneDragger));
+    windowDragger.formatValue = [] (double v) { return formatSeconds (static_cast<float> (v)); };
+    shiftDragger.formatValue = [] (double v) { return formatShift (static_cast<float> (v)); };
+    smearDragger.formatValue = [] (double v) { return formatPercent (static_cast<float> (v)); };
+    toneDragger.formatValue = [] (double v) { return formatTone (static_cast<float> (v)); };
+    for (auto [d, id] : { std::pair { &windowDragger, ParamID::window }, std::pair { &shiftDragger, ParamID::shift }, std::pair { &smearDragger, ParamID::smear }, std::pair { &toneDragger, ParamID::tone } })
+        d->setDoubleClickReturnValue (true, defaultValueOf (state, id));
+    windowDragger.setTooltip ("How long a slice of the voice each moment hears: longer is smoother and slower to change");
+    shiftDragger.setTooltip ("Moves every partial by the same number of Hz: bell-like, inharmonic shimmer");
+    smearDragger.setTooltip ("Smears each frequency over its neighbours: wider, softer, less exact");
+    toneDragger.setTooltip ("Down keeps only the breath and noise; up keeps only the sung harmonics");
     voicesDragger.setTooltip ("How many notes can sound at once");
     glideDragger.setTooltip ("Each new note slides from the last one");
 
@@ -299,7 +317,8 @@ void SingPanel::setBypassed (bool shouldBypass)
     // Dim the controls while bypassed; they still work.
     const float alpha = bypassed ? 0.45f : 1.0f;
     for (auto* c : std::initializer_list<juce::Component*> { voiceInfo.get(), &waveform, &loopStart, &loopLength, &loopFade,
-                                                             &holdButton, &voicesDragger, &glideDragger, &outputDragger })
+                                                             &holdButton, &voicesDragger, &glideDragger, &outputDragger,
+                                                             &windowDragger, &shiftDragger, &smearDragger, &toneDragger })
         c->setAlpha (alpha);
     for (auto& b : directionButtons)
         b->setAlpha (alpha);
@@ -536,7 +555,7 @@ void SingPanel::frame (double seconds, bool animate)
 
     // On the dark Bloom sky the bottom row and the voice's shadow switch to light colours.
     const bool dark = bloomMix > 0.5f;
-    for (auto* d : { &voicesDragger, &glideDragger, &outputDragger })
+    for (auto* d : { &voicesDragger, &glideDragger, &outputDragger, &windowDragger, &shiftDragger, &smearDragger, &toneDragger })
         d->setOnSunset (! dark);
     waveform.setDarkSky (dark);
 
@@ -578,13 +597,13 @@ void SingPanel::resized()
     waveform.setBounds (juce::Rectangle<float> (40.0f - WaveformView::margin, 206.0f - WaveformView::top,
                                                 WaveformView::width, WaveformView::height).toNearestInt());
 
-    // Loop row at y = 346: LOOP and the direction pills on the left, Start/Length/Fade on the right.
+    // Loop row at y = 326: LOOP and the direction pills on the left, Start/Length/Fade on the right.
     const float loopLabelW = trackedTextWidth ("LOOP", Fonts::sans (12.0f, false, 0.24f)) + 6.0f;
     float x = 40.0f + loopLabelW + 10.0f;
     for (auto& b : directionButtons)
     {
         const float w = b->preferredWidth();
-        b->setBounds (juce::Rectangle<float> (x, 346.0f, w, 36.0f).toNearestInt());
+        b->setBounds (juce::Rectangle<float> (x, 326.0f, w, 36.0f).toNearestInt());
         x += w + 6.0f;
     }
     float rx = 1000.0f;
@@ -592,15 +611,15 @@ void SingPanel::resized()
                               std::pair { &loopStart, juce::String ("60.00 s") } })
     {
         const float w = d->preferredWidth (widest);
-        d->setBounds (juce::Rectangle<float> (rx - w, 346.0f, w, 36.0f).toNearestInt());
+        d->setBounds (juce::Rectangle<float> (rx - w, 326.0f, w, 36.0f).toNearestInt());
         rx -= w + 28.0f;
     }
 
-    // Knobs: seven across the 960-wide row, dials starting at y = 398.
+    // Knobs: seven across the 960-wide row, dials starting at y = 378.
     const float knobW = (960.0f - 6.0f * 8.0f) / static_cast<float> (numKnobs);
     for (int i = 0; i < numKnobs; ++i)
         knobs[static_cast<size_t> (i)].setBounds (
-            juce::Rectangle<float> (40.0f + static_cast<float> (i) * (knobW + 8.0f), 398.0f - Knob::topMargin, knobW, Knob::height).toNearestInt());
+            juce::Rectangle<float> (40.0f + static_cast<float> (i) * (knobW + 8.0f), 378.0f - Knob::topMargin, knobW, Knob::height).toNearestInt());
 
     // Bottom row.
     holdButton.setBounds (juce::Rectangle<float> (40.0f, 556.0f, holdButton.preferredWidth(), 40.0f).toNearestInt());
@@ -610,6 +629,15 @@ void SingPanel::resized()
         const float w = b->preferredWidth();
         b->setBounds (juce::Rectangle<float> (ex, 556.0f, w, 40.0f).toNearestInt());
         ex += w + 6.0f;
+    }
+    // Bloom's row, between the knobs and the bottom row: shown only while Bloom is on.
+    ex = 40.0f;
+    for (auto [d, widest] : { std::pair { &windowDragger, juce::String ("680 ms") }, std::pair { &shiftDragger, juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92" "500 Hz")) }, std::pair { &smearDragger, juce::String ("100%") },
+                              std::pair { &toneDragger, juce::String ("Breath 100") } })
+    {
+        const float w = d->preferredWidth (widest);
+        d->setBounds (juce::Rectangle<float> (ex, 514.0f, w, 28.0f).toNearestInt());
+        ex += w + 34.0f;
     }
     rx = 1000.0f;
     for (auto [d, widest] : { std::pair { &outputDragger, juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92" "36.0 dB")) }, std::pair { &glideDragger, juce::String ("2.0 s") },
@@ -651,7 +679,7 @@ void SingPanel::paint (juce::Graphics& g)
 
     // LOOP caption.
     g.setOpacity (bypassed ? 0.45f : 1.0f);
-    drawTrackedText (g, "LOOP", { 40.0f, 346.0f, 80.0f, 36.0f }, Fonts::sans (12.0f, false, 0.24f),
+    drawTrackedText (g, "LOOP", { 40.0f, 326.0f, 80.0f, 36.0f }, Fonts::sans (12.0f, false, 0.24f),
                      juce::Justification::centredLeft, Colours::soft.withMultipliedAlpha (bypassed ? 0.45f : 1.0f));
 
     // Hold's glow, like a CSS box-shadow under the lit pill, and the lit engine's.

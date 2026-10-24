@@ -11,7 +11,8 @@ namespace sing
 
 // Bloom's analysis of one loop, built once when the loop is built (off the audio thread).
 //
-// The loop is cut into overlapping frames, each a long Hann-windowed FFT (about 0.68 s),
+// The loop is cut into overlapping frames, each a long Hann-windowed FFT (0.68 s unless the
+// Window control says otherwise),
 // read with wrap-around so the seam is already blended. For every frame Sing keeps only how
 // loud each frequency is, split into two parts:
 // - the spectral envelope: the vowel's overall shape, smoothed over a few hundred Hz;
@@ -48,8 +49,9 @@ public:
     static constexpr float peakScale = 64.0f;
     const int16_t* peaks (int frame) const noexcept { return peakData.data() + (size_t) frame * (size_t) bins; }
 
-    // True when harmonics were found and locked (LoopSettings::bloomLockHarmonics). False
-    // for the classic method: every bin is noPeak and gets a random phase.
+    // True when harmonics are locked (LoopSettings::bloomLockHarmonics). False for the
+    // classic method: harmonics are still marked in peaks() (for the Tone control), but every
+    // bin gets a random phase and the magnitudes are as analysed.
     bool locksHarmonics() const noexcept { return locked; }
 
     // Onsets: sudden rises in the sound (a consonant, a breath in, a hit), found with short
@@ -71,8 +73,12 @@ public:
     // Decodes a fine-structure value.
     static float decode (uint16_t code) noexcept { return decodeTable()[code]; }
 
-    // Picks the FFT size for a loop: about 0.68 s, smaller for loops shorter than that.
-    static int chooseSize (int bufferSize, double sampleRate) noexcept;
+    // The Window control's range, in seconds.
+    static constexpr double minWindowSeconds = 0.1, maxWindowSeconds = 1.4;
+
+    // Picks the FFT size for a loop: the power of two nearest the window length, smaller for
+    // loops shorter than that.
+    static int chooseSize (int bufferSize, double sampleRate, double windowSeconds = 0.68) noexcept;
 
 private:
     static const float* decodeTable() noexcept;

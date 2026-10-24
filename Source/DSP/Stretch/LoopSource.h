@@ -42,6 +42,11 @@ struct LoopSettings
     // phases running from frame to frame instead, so a held vowel trembles less.
     bool bloomLockHarmonics = false;
 
+    // Bloom's window length in seconds (the Window control), 0.1 to 1.4. Longer is smoother
+    // and slower to change; shorter keeps more of the voice's movement. Rounded to a power
+    // of two samples, and never longer than the loop.
+    float bloomWindowSeconds = 0.68f;
+
     // The voice's pitch over time, when it has been measured. Voices that move between notes
     // need it: pitch-synchronous processing must follow the note actually sounding, not the
     // root. Without it, pitchPeriod is used everywhere.

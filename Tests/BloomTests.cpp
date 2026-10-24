@@ -292,7 +292,7 @@ TEST_CASE ("Bloom (classic): every bin gets a random phase and the spectrum is k
     for (int f = 0; f < analysis->numFrames(); ++f)
         for (int k = 0; k < analysis->numBins(); ++k)
             marked += analysis->peaks (f)[k] != BloomAnalysis::noPeak ? 1 : 0;
-    CHECK (marked == 0);
+    CHECK (marked > 0);   // harmonics are marked for Tone, but nothing is redrawn or locked
 
     // Played at the root, the smear keeps the loop's balance of lows and highs.
     SingSynth synth;
@@ -433,4 +433,83 @@ TEST_CASE ("Bloom: a stretched note passes an onset at the recorded speed")
     std::printf ("  Bloom passing an onset at Stretch speed 0.05: %.1f s stretched, %.1f s with onsets\n", seconds[0], seconds[1]);
     CHECK (seconds[0] > 8.0);
     CHECK (seconds[1] < 2.0);
+}
+
+namespace
+{
+// The share of a render's power within 8 Hz of the partials n * f0 + offsetHz (n = 1 to 20).
+double partialShare (const std::vector<float>& x, int from, int n, double f0, double offsetHz)
+{
+    constexpr int size = 32768;
+    sing::RealFFT fft (size);
+    std::vector<float> frame ((size_t) size), spectrum ((size_t) size + 2);
+    std::vector<double> power ((size_t) size / 2 + 1);
+    for (int start = from; start + size <= from + n; start += size / 2)
+    {
+        for (int i = 0; i < size; ++i)
+            frame[(size_t) i] = x[(size_t) (start + i)] * (float) (0.5 - 0.5 * std::cos (6.283185307179586 * i / size));
+        fft.forward (frame.data(), spectrum.data());
+        for (int k = 0; k <= size / 2; ++k)
+            power[(size_t) k] += (double) spectrum[(size_t) (2 * k)] * spectrum[(size_t) (2 * k)]
+                               + (double) spectrum[(size_t) (2 * k + 1)] * spectrum[(size_t) (2 * k + 1)];
+    }
+    double total = 0.0, near = 0.0;
+    for (int k = 1; k <= size / 2; ++k)
+    {
+        const double hz = k * sr / size;
+        if (hz < 50.0 || hz > 20.0 * f0 + offsetHz + 100.0)
+            continue;
+        total += power[(size_t) k];
+        const double m = std::round ((hz - offsetHz) / f0);
+        if (m >= 1.0 && m <= 20.0 && std::abs (hz - (m * f0 + offsetHz)) < 8.0)
+            near += power[(size_t) k];
+    }
+    return near / (total + 1.0e-30);
+}
+
+std::vector<float> playBloom (const std::shared_ptr<const LoopSource>& src, float shiftHz, float blur, float tone)
+{
+    BloomVoice voice;
+    voice.prepare (sr);
+    BloomVoice::Parameters p;
+    p.speed = 0.3f;
+    p.shiftHz = shiftHz;
+    p.blur = blur;
+    p.tone = tone;
+    p.numLayers = 1;
+    p.layers[0].gainLeft = p.layers[0].gainRight = 0.5f;
+    voice.setParameters (p);
+    voice.start (*src, 0.0, 11u, 0.0f);
+    std::vector<float> l ((size_t) 5 * 48000), r ((size_t) 5 * 48000);
+    for (size_t i = 0; i < l.size(); i += 256)
+        voice.render (l.data() + i, r.data() + i, (int) std::min<size_t> (256, l.size() - i));
+    return l;
+}
+} // namespace
+
+TEST_CASE ("Bloom: frequency shift moves every partial by the same Hz")
+{
+    auto src = bloomSource (PlaceholderVowel::ooh);
+    const auto plain = playBloom (src, 0.0f, 0.0f, 0.0f);
+    const auto shifted = playBloom (src, 100.0f, 0.0f, 0.0f);
+    const double before = partialShare (plain, 48000, 4 * 48000, 220.0, 0.0);
+    const double onOld = partialShare (shifted, 48000, 4 * 48000, 220.0, 0.0);
+    const double onNew = partialShare (shifted, 48000, 4 * 48000, 220.0, 100.0);
+    std::printf ("  Bloom shift +100 Hz: power on 220 Hz harmonics %.2f before, %.2f after; on harmonics + 100 Hz %.2f\n", before, onOld, onNew);
+    CHECK (onNew > 0.5 * before);
+    CHECK (onOld < 0.2 * before);
+}
+
+TEST_CASE ("Bloom: Tone moves between harmonics only and breath only, and blur smears them")
+{
+    auto src = bloomSource (PlaceholderVowel::ah);
+    const double f0 = 196.0;   // the "ah" voice's root, played at the root
+    const double noise = partialShare (playBloom (src, 0.0f, 0.0f, -1.0f), 48000, 4 * 48000, f0, 0.0);
+    const double both = partialShare (playBloom (src, 0.0f, 0.0f, 0.0f), 48000, 4 * 48000, f0, 0.0);
+    const double tonal = partialShare (playBloom (src, 0.0f, 0.0f, 1.0f), 48000, 4 * 48000, f0, 0.0);
+    const double blurred = partialShare (playBloom (src, 0.0f, 1.0f, 0.0f), 48000, 4 * 48000, f0, 0.0);
+    std::printf ("  Bloom power on the harmonics: Tone -1 %.2f, 0 %.2f, +1 %.2f; blur 1 %.2f\n", noise, both, tonal, blurred);
+    CHECK (noise < both);
+    CHECK (tonal > both);
+    CHECK (blurred < 0.7 * both);
 }
