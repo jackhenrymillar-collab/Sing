@@ -473,6 +473,13 @@ BloomVoice::Parameters SingVoice::bloomParameters (const std::array<CopyShape, (
     p.shiftHz = voiceSettings.shiftHz;
     p.blur = voiceSettings.smear;
     p.tone = voiceSettings.tone;
+    p.onsets = voiceSettings.onsets;
+    p.rootHz = voiceSettings.rootHz;
+    p.harmonicsCents = voiceSettings.harmonicsCents;
+    p.harmonicsCount = voiceSettings.harmonicsCount;
+    p.filter = voiceSettings.filter;
+    p.lowHz = voiceSettings.lowHz;
+    p.highHz = voiceSettings.highHz;
     p.numLayers = 0;
     for (int i = 0; i < maxCopies; ++i)
     {

@@ -105,6 +105,13 @@ public:
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
     }
 
+    // Compact: one line, the name and then the details, for while Advanced is open.
+    void setCompact (bool c)
+    {
+        compact = c;
+        repaint();
+    }
+
     void set (const juce::String& lengthText, const juce::String& voiceName, const juce::String& line)
     {
         length = lengthText;
@@ -116,6 +123,15 @@ public:
     void paintButton (juce::Graphics& g, bool highlighted, bool) override
     {
         const float w = static_cast<float> (getWidth());
+        if (compact)
+        {
+            const auto nameFont = Fonts::serif (34.0f);
+            drawTrackedText (g, name, { 0.0f, 0.0f, w, 44.0f }, nameFont, juce::Justification::centredLeft, Colours::ivory);
+            const float x = trackedTextWidth (name, nameFont) + 18.0f;
+            drawTrackedText (g, description + kDot + length, { x, 4.0f, w - x, 44.0f }, Fonts::sans (13.0f),
+                             juce::Justification::centredLeft, highlighted ? Colours::ivory : Colours::soft);
+            return;
+        }
         drawTrackedText (g, "VOICE" + kDot + length, { 0.0f, 0.0f, w, 16.0f }, Fonts::sans (12.0f, false, 0.3f),
                          juce::Justification::centredLeft, Colours::soft);
         drawTrackedText (g, name, { 0.0f, 18.0f, w, 50.0f }, Fonts::serif (46.0f),
@@ -126,12 +142,13 @@ public:
 
 private:
     juce::String length, name, description;
+    bool compact = false;
 };
 
 //==============================================================================
 SingPanel::SingPanel (SingProcessor& p)
     : processor (p), presets (p.getPresets()), presetName (std::make_unique<PresetName>()),
-      voiceInfo (std::make_unique<VoiceInfo>()), waveform (p.getState()),
+      voiceInfo (std::make_unique<VoiceInfo>()), waveform (p.getState()), advanced (p.getState()),
       starButton (std::make_unique<StarButton>())
 {
     setOpaque (true);
@@ -241,8 +258,9 @@ SingPanel::SingPanel (SingProcessor& p)
             bloomEngine = juce::roundToInt (value) == 1;
             for (int i = 0; i < 2; ++i)
                 engineButtons[(size_t) i]->setToggleState (i == (bloomEngine ? 1 : 0), juce::dontSendNotification);
-            for (auto* d : { &windowDragger, &shiftDragger, &smearDragger, &toneDragger })
-                d->setVisible (bloomEngine);
+            advancedButton.setVisible (bloomEngine);
+            if (! bloomEngine && advancedOpen)
+                setAdvancedOpen (false);
             if (! motion)
                 bloomMix = bloomEngine ? 1.0f : 0.0f;
             repaint();
@@ -257,22 +275,12 @@ SingPanel::SingPanel (SingProcessor& p)
     outputDragger.formatValue = [] (double v) { return formatDecibels (static_cast<float> (v)); };
     for (auto [d, id] : { std::pair { &voicesDragger, ParamID::voices }, std::pair { &glideDragger, ParamID::glide }, std::pair { &outputDragger, ParamID::output } })
         d->setDoubleClickReturnValue (true, defaultValueOf (state, id));
-    for (auto* d : { &windowDragger, &shiftDragger, &smearDragger, &toneDragger })
-        addChildComponent (d);
-    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::window, windowDragger));
-    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::shift, shiftDragger));
-    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::smear, smearDragger));
-    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::tone, toneDragger));
-    windowDragger.formatValue = [] (double v) { return formatSeconds (static_cast<float> (v)); };
-    shiftDragger.formatValue = [] (double v) { return formatShift (static_cast<float> (v)); };
-    smearDragger.formatValue = [] (double v) { return formatPercent (static_cast<float> (v)); };
-    toneDragger.formatValue = [] (double v) { return formatTone (static_cast<float> (v)); };
-    for (auto [d, id] : { std::pair { &windowDragger, ParamID::window }, std::pair { &shiftDragger, ParamID::shift }, std::pair { &smearDragger, ParamID::smear }, std::pair { &toneDragger, ParamID::tone } })
-        d->setDoubleClickReturnValue (true, defaultValueOf (state, id));
-    windowDragger.setTooltip ("How long a slice of the voice each moment hears: longer is smoother and slower to change");
-    shiftDragger.setTooltip ("Moves every partial by the same number of Hz: bell-like, inharmonic shimmer");
-    smearDragger.setTooltip ("Smears each frequency over its neighbours: wider, softer, less exact");
-    toneDragger.setTooltip ("Down keeps only the breath and noise; up keeps only the sung harmonics");
+    // Bloom's Advanced section and the button that opens it (shown only in Bloom).
+    addChildComponent (advanced);
+    addChildComponent (advancedButton);
+    advancedButton.setClickingTogglesState (false);
+    advancedButton.setTooltip ("Bloom's modules: Window, Onsets, Shift, Smear, Tone, Harmonics and Filter");
+    advancedButton.onClick = [this] { setAdvancedOpen (! advancedOpen); };
     voicesDragger.setTooltip ("How many notes can sound at once");
     glideDragger.setTooltip ("Each new note slides from the last one");
 
@@ -301,6 +309,23 @@ SingPanel::SingPanel (SingProcessor& p)
 
 SingPanel::~SingPanel() = default;
 
+void SingPanel::setAdvancedOpen (bool open)
+{
+    advancedOpen = open && bloomEngine;
+    advancedButton.setToggleState (advancedOpen, juce::dontSendNotification);
+    advanced.setVisible (advancedOpen);
+    // Advanced covers the waveform, the loop row and the knobs; the voice shrinks to one line.
+    for (auto* c : std::initializer_list<juce::Component*> { &waveform, &dropButton, &loopStart, &loopLength, &loopFade })
+        c->setVisible (! advancedOpen);
+    for (auto& b : directionButtons)
+        b->setVisible (! advancedOpen);
+    for (auto& k : knobs)
+        k.setVisible (! advancedOpen);
+    voiceInfo->setCompact (advancedOpen);
+    resized();
+    repaint();
+}
+
 juce::String SingPanel::formatLoopSeconds (double percent) const
 {
     const auto v = processor.getVoice();
@@ -321,7 +346,7 @@ void SingPanel::setBypassed (bool shouldBypass)
     const float alpha = bypassed ? 0.45f : 1.0f;
     for (auto* c : std::initializer_list<juce::Component*> { voiceInfo.get(), &waveform, &loopStart, &loopLength, &loopFade,
                                                              &holdButton, &keepVowelButton, &voicesDragger, &glideDragger, &outputDragger,
-                                                             &windowDragger, &shiftDragger, &smearDragger, &toneDragger })
+                                                             &advancedButton, &advanced })
         c->setAlpha (alpha);
     for (auto& b : directionButtons)
         b->setAlpha (alpha);
@@ -558,7 +583,7 @@ void SingPanel::frame (double seconds, bool animate)
 
     // On the dark Bloom sky the bottom row and the voice's shadow switch to light colours.
     const bool dark = bloomMix > 0.5f;
-    for (auto* d : { &voicesDragger, &glideDragger, &outputDragger, &windowDragger, &shiftDragger, &smearDragger, &toneDragger })
+    for (auto* d : { &voicesDragger, &glideDragger, &outputDragger })
         d->setOnSunset (! dark);
     waveform.setDarkSky (dark);
 
@@ -568,6 +593,8 @@ void SingPanel::frame (double seconds, bool animate)
         if (f.note >= 0)
             level = std::max (level, f.level);
     bloomSky.setActivity (level);
+    if (advancedOpen)
+        advanced.frame (seconds, animate, level);
 
     const auto now = nowSeconds();
     if (now - lastPresetCheck > 0.2)
@@ -595,7 +622,11 @@ void SingPanel::resized()
     abButton.setBounds (juce::Rectangle<float> (right - saveW - 8.0f - abW, 24.0f, abW, 40.0f).toNearestInt());
 
     // The voice.
-    voiceInfo->setBounds (40, 96, 500, 92);
+    if (advancedOpen)
+        voiceInfo->setBounds (40, 88, 760, 46);
+    else
+        voiceInfo->setBounds (40, 96, 500, 92);
+    advanced.setBounds (40, 146, 960, juce::roundToInt (AdvancedPanel::headingHeight + 10.0f + 2.0f * ModuleTile::height + 12.0f));
     dropButton.setBounds (juce::Rectangle<float> (560.0f, 150.0f, dropButton.preferredWidth(), 40.0f).toNearestInt());
     waveform.setBounds (juce::Rectangle<float> (40.0f - WaveformView::margin, 206.0f - WaveformView::top,
                                                 WaveformView::width, WaveformView::height).toNearestInt());
@@ -634,15 +665,8 @@ void SingPanel::resized()
         ex += w + 6.0f;
     }
     keepVowelButton.setBounds (juce::Rectangle<float> (ex + 16.0f, 556.0f, keepVowelButton.preferredWidth(), 40.0f).toNearestInt());
-    // Bloom's row, between the knobs and the bottom row: shown only while Bloom is on.
-    ex = 40.0f;
-    for (auto [d, widest] : { std::pair { &windowDragger, juce::String ("680 ms") }, std::pair { &shiftDragger, juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92" "500 Hz")) }, std::pair { &smearDragger, juce::String ("100%") },
-                              std::pair { &toneDragger, juce::String ("Breath 100") } })
-    {
-        const float w = d->preferredWidth (widest);
-        d->setBounds (juce::Rectangle<float> (ex, 514.0f, w, 28.0f).toNearestInt());
-        ex += w + 34.0f;
-    }
+    ex += 16.0f + keepVowelButton.preferredWidth() + 6.0f;
+    advancedButton.setBounds (juce::Rectangle<float> (ex, 556.0f, advancedButton.preferredWidth(), 40.0f).toNearestInt());
     rx = 1000.0f;
     for (auto [d, widest] : { std::pair { &outputDragger, juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92" "36.0 dB")) }, std::pair { &glideDragger, juce::String ("2.0 s") },
                               std::pair { &voicesDragger, juce::String ("16") } })
@@ -683,7 +707,8 @@ void SingPanel::paint (juce::Graphics& g)
 
     // LOOP caption.
     g.setOpacity (bypassed ? 0.45f : 1.0f);
-    drawTrackedText (g, "LOOP", { 40.0f, 326.0f, 80.0f, 36.0f }, Fonts::sans (12.0f, false, 0.24f),
+    if (! advancedOpen)
+        drawTrackedText (g, "LOOP", { 40.0f, 326.0f, 80.0f, 36.0f }, Fonts::sans (12.0f, false, 0.24f),
                      juce::Justification::centredLeft, Colours::soft.withMultipliedAlpha (bypassed ? 0.45f : 1.0f));
 
     // Hold's glow, like a CSS box-shadow under the lit pill, and the lit engine's.
@@ -691,6 +716,8 @@ void SingPanel::paint (juce::Graphics& g)
         drawGlow (g, holdButton.getBounds().toFloat(), 20.0f, 16.0f, Colours::gold.withAlpha (0.5f));
     if (keepVowelButton.getToggleState())
         drawGlow (g, keepVowelButton.getBounds().toFloat(), 20.0f, 12.0f, Colours::gold.withAlpha (0.3f));
+    if (advancedOpen)
+        drawGlow (g, advancedButton.getBounds().toFloat(), 20.0f, 12.0f, Colours::gold.withAlpha (0.3f));
     for (auto& b : engineButtons)
         if (b->getToggleState())
             drawGlow (g, b->getBounds().toFloat(), 20.0f, 12.0f, Colours::gold.withAlpha (0.3f));

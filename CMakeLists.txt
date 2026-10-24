@@ -106,6 +106,7 @@ if (SING_BUILD_PLUGIN)
         Source/Plugin/UI/BloomSky.cpp
         Source/Plugin/UI/BlueHourSky.cpp
         Source/Plugin/UI/Controls.cpp
+        Source/Plugin/UI/ModulePanel.cpp
         Source/Plugin/UI/Theme.cpp
         Source/Plugin/UI/WaveformView.cpp)
     if (APPLE)

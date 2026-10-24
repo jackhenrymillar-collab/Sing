@@ -30,6 +30,11 @@ struct VoiceSettings
     float shiftHz = 0.0f;            // Shift: every partial moved by this many Hz, -500 to +500
     float smear = 0.0f;              // Smear: frequency spread, 0 to 1
     float tone = 0.0f;               // Tone: -1 breath and noise only, 0 as recorded, +1 harmonics only
+    float onsets = 1.0f;             // Onsets: 0 smears attacks like the rest, 1 passes them at the recorded speed
+    float harmonicsCents = 0.0f;     // Harmonics: 0 off; else the width either side of each of the key's harmonics
+    int harmonicsCount = 16;         // ...and how many of them
+    bool filter = false;             // Filter: keeps lowHz to highHz (cuts it out when lowHz is above highHz)
+    float lowHz = 120.0f, highHz = 8000.0f;
 
     // The voice's root pitch. Unpitched voices (breaths) still map keys from rootHz, but the
     // formant shifter uses short frames and a fixed envelope width instead of the period.

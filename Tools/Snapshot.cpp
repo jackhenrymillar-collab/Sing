@@ -9,6 +9,7 @@
 // With seconds = 0 it writes one still (panel.png). Otherwise it writes numbered
 // frames (frame-0000.png, ...) covering that many seconds of animation.
 //
+// ADVANCED=1 opens Bloom's Advanced section (with engine=1).
 // NOTES=60,64,67 in the environment plays those MIDI notes through the synth, so the play
 // lights show; the still is then taken after PLAY_SECONDS (default 3) of playing.
 
@@ -74,6 +75,9 @@ int main (int argc, char* argv[])
 
     std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
     auto* singEditor = dynamic_cast<sing::SingEditor*> (editor.get());
+    // ADVANCED=1 opens Bloom's Advanced section (needs engine=1).
+    if (std::getenv ("ADVANCED") != nullptr && singEditor != nullptr)
+        singEditor->setAdvancedOpen (true);
 
     auto write = [&] (const juce::String& name)
     {

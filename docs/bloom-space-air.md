@@ -88,18 +88,26 @@ blocks):
 | Spread 0 | 8 % of a core | about 1.4 ms |
 | Spread 1 | 22 % of a core | about 2.3 ms |
 
-### Spectral controls
+### Advanced: the spectral modules
 
-While Bloom is on, a row under the knobs shows four controls (granular ignores them):
+In Bloom the bottom row shows an ADVANCED button. It opens a panel over the waveform, loop row
+and knobs: one square per module, in the order the sound passes through them, each with an
+on/off light (Window is always on), its controls, and a small moving picture of what it does
+(drawn from the module's settings, and livelier while notes sound). An eighth square draws the
+combined result. Granular ignores all of them.
 
-| Control | Parameter | Range | What it does |
+| Module | Parameters | Range | What it does |
 | --- | --- | --- | --- |
 | Window | `window` | 0.1 to 1.4 s (default 0.68 s) | The analysis and synthesis window, rounded to a power of two samples and never longer than the loop. Longer is smoother and slower to change. Changing it rebuilds the analysis; notes already sounding keep their window. |
-| Shift | `shift` | -500 to +500 Hz | Frequency shift: every partial moves by the same number of Hz, so harmonics become inharmonic (bell-like). The vowel envelope stays put. |
-| Smear | `smear` | 0 to 100 % | Frequency spread: each bin reads from a random point up to 12 % (about two semitones) away, a new one every frame, so the spectrum blurs. |
-| Tone | `tone` | Breath 100 to Pure 100 | Tonal against noise: down fades out the harmonics (found as in the analysis) and keeps the breath and noise; up does the opposite. |
+| Onsets | `onsetson`, `onsets` | 0 to 100 % | How strongly an onset pulls the read position to the recorded speed (step 5 above). |
+| Shift | `shifton`, `shift` | -500 to +500 Hz | Frequency shift: every partial moves by the same number of Hz, so harmonics become inharmonic (bell-like). The vowel envelope stays put. |
+| Smear | `smearon`, `smear` | 0 to 100 % | Frequency spread: each bin reads from a random point up to 12 % (about two semitones) away, a new one every frame, so the spectrum blurs. |
+| Tone | `toneon`, `tone` | Breath 100 to Pure 100 | Tonal against noise: down fades out the harmonics (found as in the analysis) and keeps the breath and noise; up does the opposite. |
+| Harmonics | `harmonicson`, `harmonicswidth`, `harmonicscount` | 1 to 200 cents, 1 to 64 | Keeps only what lies near the harmonics of the key being played (the voice's root times the note's pitch ratio, so each Spread copy gets its own comb), up to Count. Each harmonic passes a Gaussian of half-width Width (never narrower than about a bin, so short windows still catch the low harmonics). Breath and noise become a tuned chord. The comb's power loss is made up per frame (up to 24 dB, eased frame to frame), so switching it on keeps the level even on a voice whose pitch wanders off the key. |
+| Filter | `filteron`, `filterlow`, `filterhigh` | 20 Hz to 20 kHz | Keeps Low to High, with a raised-cosine slope a twelfth of an octave either side of each edge. With Low above High it cuts that band out instead. No make-up: cutting is the point. |
 
-All four default to the sound before they existed.
+The older modules' switches start on and the new ones start off, so older sessions and
+presets sound as they did. RESET ALL puts every module back to its default.
 
 A Bloom note whose loop has no analysis yet (just switched, still building) plays granular.
 

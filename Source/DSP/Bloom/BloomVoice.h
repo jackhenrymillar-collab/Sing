@@ -65,6 +65,15 @@ public:
         float shiftHz = 0.0f;           // frequency shift: moves every partial by this many Hz (inharmonic)
         float blur = 0.0f;              // frequency spread, 0 to 1: smears each bin over nearby frequencies
         float tone = 0.0f;              // -1: noise and breath only; 0: as recorded; 1: harmonics only
+        // Harmonics: keeps only what lies near the harmonics of the key being played (the
+        // voice's root times each layer's pitch ratio), up to harmonicsCount. 0 cents is off.
+        float rootHz = 261.63f;
+        float harmonicsCents = 0.0f;    // how far either side of each harmonic still passes (half the level here)
+        int harmonicsCount = 16;
+        // Filter: keeps lowHz to highHz, with a sixth of an octave's slope at each edge. With
+        // lowHz above highHz it cuts highHz to lowHz out instead.
+        bool filter = false;
+        float lowHz = 20.0f, highHz = 20000.0f;
         int numLayers = 1;
         std::array<Layer, maxLayers> layers {};
     };
@@ -104,6 +113,7 @@ private:
         float noiseScale = 1.0f; // the same for breath and noise (no pitch on a pitched voice)
         float amplitude = 0.0f, tonalAmplitude = 0.0f;   // noise and harmonics
         float gainLeft = 0.0f, gainRight = 0.0f;
+        float harmonicsPerBin = 0.0f;   // the key's harmonic number per output bin; 0: Harmonics off
         int peakBin = -1;            // the harmonic whose phase was worked out last
         uint32_t peakPhase = 0;
     };
@@ -117,6 +127,8 @@ private:
     void renderFilling (float* left, float* right, int len) noexcept;
     int building() const noexcept { return (newest + 1) % (overlap + 1); }
     void buildBins (int from, int to) noexcept;
+    float filterGain (int bin) const noexcept;
+    float combGain (const LayerFrame&, int bin) const noexcept;   // Harmonics
     uint32_t nextRandom() noexcept;
 
     double hostRate = 48000.0;
@@ -131,6 +143,14 @@ private:
     std::array<LayerFrame, maxLayers> frameLayers {};
     int frameLayerCount = 0;
     float envScale = 1.0f;
+    // The filter's edges in output bins: rising from riseFrom to riseTo, falling from
+    // fallFrom to fallTo. Fixed for each frame.
+    bool filterOn = false, filterStop = false;
+    float riseFrom = 0.0f, riseTo = 0.0f, fallFrom = 0.0f, fallTo = 0.0f;
+    float harmonicsWidth = 0.0f;   // harmonicsCents as a fraction of the frequency
+    int harmonicsCount = 0;
+    float combMakeup = 0.0f;   // Harmonics' level make-up, eased frame to frame; 0 while off
+    double powerBeforeComb = 0.0, powerAfterComb = 0.0;   // summed over the frame being built
 
     std::vector<float> spectrumLeft, spectrumRight;
     std::vector<uint32_t> phases;    // per layer and bin; a full turn is 2^32
