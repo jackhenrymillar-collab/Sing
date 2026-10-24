@@ -19,7 +19,8 @@ voice into a glow. Sing adds what a playable vocal pad needs on top.
 
 When Bloom is selected, every loop is analysed as it is built (on the loop builder thread):
 
-- **Frames:** Hann windows of about 0.68 s (32768 samples at 48 kHz), every eighth of a window.
+- **Frames:** Hann windows of about 0.68 s (32768 samples at 48 kHz; see Window below), every
+  eighth of a window.
   Shorter loops get shorter windows, so a window never holds the loop twice. The windows read
   round the loop, so the seam is already blended.
 - **Envelope:** the vowel's shape, drawn through the tops of the harmonics (a running maximum
@@ -86,6 +87,19 @@ blocks):
 | --- | --- | --- |
 | Spread 0 | 8 % of a core | about 1.4 ms |
 | Spread 1 | 22 % of a core | about 2.3 ms |
+
+### Spectral controls
+
+While Bloom is on, a row under the knobs shows four controls (granular ignores them):
+
+| Control | Parameter | Range | What it does |
+| --- | --- | --- | --- |
+| Window | `window` | 0.1 to 1.4 s (default 0.68 s) | The analysis and synthesis window, rounded to a power of two samples and never longer than the loop. Longer is smoother and slower to change. Changing it rebuilds the analysis; notes already sounding keep their window. |
+| Shift | `shift` | -500 to +500 Hz | Frequency shift: every partial moves by the same number of Hz, so harmonics become inharmonic (bell-like). The vowel envelope stays put. |
+| Smear | `smear` | 0 to 100 % | Frequency spread: each bin reads from a random point up to 12 % (about two semitones) away, a new one every frame, so the spectrum blurs. |
+| Tone | `tone` | Breath 100 to Pure 100 | Tonal against noise: down fades out the harmonics (found as in the analysis) and keeps the breath and noise; up does the opposite. |
+
+All four default to the sound before they existed.
 
 A Bloom note whose loop has no analysis yet (just switched, still building) plays granular.
 

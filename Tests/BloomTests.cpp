@@ -513,3 +513,25 @@ TEST_CASE ("Bloom: Tone moves between harmonics only and breath only, and blur s
     CHECK (tonal > both);
     CHECK (blurred < 0.7 * both);
 }
+
+TEST_CASE ("Bloom: the Window setting sets the analysis length")
+{
+    const auto v = makePlaceholderVoice (PlaceholderVowel::ooh, sr, 4.0f);
+    const float* ch[] = { v.samples.data() };
+    int sizes[3] {};
+    const float seconds[3] { 0.1f, 0.68f, 1.4f };
+    for (int i = 0; i < 3; ++i)
+    {
+        LoopSettings s;
+        s.start = 0;
+        s.length = (int) v.samples.size();
+        s.fade = 4800;
+        s.analyseForBloom = true;
+        s.bloomWindowSeconds = seconds[i];
+        auto src = LoopSource::build (ch, 1, (int) v.samples.size(), sr, s);
+        sizes[i] = static_cast<const BloomAnalysis*> (src->analysis (StretchMode::bloom))->fftSize();
+    }
+    CHECK (sizes[0] == 4096);
+    CHECK (sizes[1] == 32768);
+    CHECK (sizes[2] == 65536);
+}
