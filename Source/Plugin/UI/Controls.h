@@ -94,9 +94,27 @@ public:
     float preferredWidth (const juce::String& widestValue) const;
     void setOnSunset (bool s) { if (s != sunset) { sunset = s; repaint(); } }
 
+    // Row style, for the module tiles: the caption on the left, the value on the right and a
+    // thin bar underneath showing where the value sits in its range.
+    void setRowStyle (bool r) { row = r; repaint(); }
+
 private:
     juce::String caption;
     bool sunset;
+    bool row = false;
+};
+
+// A small upright fader with its value above and its caption below (the Octaves levels).
+// Drag up or down (Shift for fine moves), or double-click to reset.
+class VerticalFader final : public juce::Slider
+{
+public:
+    explicit VerticalFader (const juce::String& caption);
+    std::function<juce::String (double)> formatValue;
+    void paint (juce::Graphics&) override;
+
+private:
+    juce::String caption;
 };
 
 // "Name this preset" box shown over the panel when Save is clicked.

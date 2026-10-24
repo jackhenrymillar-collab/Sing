@@ -58,8 +58,41 @@ void drawNoiseBars (juce::Graphics& g, const Units& u, juce::Colour colour, floa
     }
 }
 
-// Frequency on the filter picture's log axis, 20 Hz to 20 kHz across 120 units.
+// Frequency on the filter picture's log axis, 20 Hz to 20 kHz across 120 units, and back.
 float filterUnit (float hz) { return 120.0f * std::log10 (std::max (hz, 20.0f) / 20.0f) / 3.0f; }
+float unitHz (float unit) { return 20.0f * std::pow (10.0f, unit * 3.0f / 120.0f); }
+
+// How much of a frequency a low and high cut keeps: slope 0 is a hard edge, 1 and 2 are 6
+// and 12 dB per octave. Low above High cuts the band out instead.
+float cutGain (float hz, float low, float high, int slope)
+{
+    if (slope <= 0)
+    {
+        const bool inside = hz >= std::min (low, high) && hz <= std::max (low, high);
+        return inside != (low > high) ? 1.0f : 0.0f;
+    }
+    const float order = (float) slope;
+    const float hp = 1.0f / std::sqrt (1.0f + std::pow (low / hz, 2.0f * order));
+    const float lp = 1.0f / std::sqrt (1.0f + std::pow (hz / high, 2.0f * order));
+    if (low > high)
+        return std::min (1.0f, std::sqrt (hp * hp + lp * lp));
+    return hp * lp;
+}
+
+// A spectrum of bars on the log axis, each lit by how much the cut keeps.
+void drawCutSpectrum (juce::Graphics& g, const Units& u, float low, float high, int slope, float t, juce::Colour lit, juce::Colour dim)
+{
+    for (int i = 0; i < 28; ++i)
+    {
+        const float x = 4.0f + (float) i * 4.0f;
+        const float harm = (i % 3 == 1) ? 1.0f : 0.35f;
+        float hh = 4.0f + harm * (40.0f - (float) i) * (0.75f + 0.25f * hash (i + 29));
+        hh *= 1.0f + 0.08f * std::sin (t * 2.2f + (float) i);
+        const float gain = cutGain (unitHz (x + 1.3f), low, high, slope);
+        g.setColour (dim.interpolatedWith (lit, gain));
+        g.fillRect (u.x (x), u.y (56.0f - hh), u.w (2.6f), u.h (hh));
+    }
+}
 } // namespace
 
 bool ModuleSettings::isOn (ModuleKind k) const noexcept
@@ -73,8 +106,17 @@ bool ModuleSettings::isOn (ModuleKind k) const noexcept
         case ModuleKind::tone:      return toneOn;
         case ModuleKind::harmonics: return harmonicsOn;
         case ModuleKind::filter:    return filterOn;
+        case ModuleKind::compressor:  return compressorOn;
+        case ModuleKind::octaves:     return octavesOn;
+        case ModuleKind::binaural:    return binauralOn;
+        case ModuleKind::spaceFilter: return spaceFilterOn;
     }
     return true;
+}
+
+bool worksInBothEngines (ModuleKind k) noexcept
+{
+    return k == ModuleKind::binaural || k == ModuleKind::spaceFilter;
 }
 
 void drawModuleVisual (juce::Graphics& g, ModuleKind kind, juce::Rectangle<float> area, const ModuleSettings& s, float t)
@@ -88,10 +130,11 @@ void drawModuleVisual (juce::Graphics& g, ModuleKind kind, juce::Rectangle<float
     {
         case ModuleKind::window:
         {
-            // Overlapping windows, a quarter of a window apart, gliding by. Their width follows
-            // the Window setting.
-            const float width = juce::jmap (juce::jlimit (0.1f, 1.4f, s.windowSeconds), 0.1f, 1.4f, 22.0f, 84.0f);
-            const float hop = width * 0.25f;
+            // Overlapping windows, half a window apart, gliding by. Their width follows the
+            // Window setting.
+            const float span = std::log (40.0f / 0.1f);
+            const float width = juce::jmap (std::log (juce::jlimit (0.1f, 40.0f, s.windowSeconds) / 0.1f), 0.0f, span, 22.0f, 96.0f);
+            const float hop = width * 0.5f;
             const float phase = std::fmod (t * hop * 0.9f, hop);
             for (float start = -width - phase; start < 120.0f; start += hop)
             {
@@ -236,25 +279,137 @@ void drawModuleVisual (juce::Graphics& g, ModuleKind kind, juce::Rectangle<float
         {
             // A spectrum on a log axis, bright inside the band (or outside it, when Low is
             // above High and the band is cut out).
+            // The softer slopes fade the bars out gradually past the edges.
             const float lo = filterUnit (std::min (s.lowHz, s.highHz)), hi = filterUnit (std::max (s.lowHz, s.highHz));
             const bool stop = s.lowHz > s.highHz;
-            for (int i = 0; i < 28; ++i)
-            {
-                const float x = 4.0f + (float) i * 4.0f;
-                const float harm = (i % 3 == 1) ? 1.0f : 0.35f;
-                float hh = 4.0f + harm * (40.0f - (float) i) * (0.75f + 0.25f * hash (i + 29));
-                hh *= 1.0f + 0.08f * std::sin (t * 2.2f + (float) i);
-                const float centre = x + 1.3f;
-                const bool inside = centre >= lo && centre <= hi;
-                const bool bright = inside != stop;
-                g.setColour (bright ? Colours::goldLight : lavender.withAlpha (0.22f));
-                g.fillRect (u.x (x), u.y (56.0f - hh), u.w (2.6f), u.h (hh));
-            }
+            drawCutSpectrum (g, u, s.lowHz, s.highHz, s.filterSlope, t, Colours::goldLight, lavender.withAlpha (0.22f));
             const juce::Rectangle<float> band (u.x (lo), u.y (2.0f), std::max (1.0f, u.x (hi) - u.x (lo)), u.h (56.0f));
             g.setColour (Colours::gold.withAlpha (stop ? 0.0f : 0.08f));
             g.fillRoundedRectangle (band, 2.0f);
             g.setColour (Colours::gold.withAlpha (0.6f));
             g.drawRoundedRectangle (band, 2.0f, 0.8f);
+            break;
+        }
+
+        case ModuleKind::compressor:
+        {
+            // Loudness over time scrolling by: the loud and quiet moments draw in towards a
+            // steady line, more so the higher the Amount.
+            const float amount = juce::jlimit (0.0f, 1.0f, s.compressor * 0.01f);
+            constexpr float target = 26.0f;
+            const float scroll = t * 3.0f;
+            const int first = (int) std::floor (scroll);
+            const float frac = scroll - (float) first;
+            for (int i = 0; i < 31; ++i)
+            {
+                const int n = first + i;
+                const float raw = 6.0f + 44.0f * (0.5f + 0.5f * std::sin ((float) n * 0.55f)) * (0.6f + 0.4f * hash (n + 101));
+                const float hh = raw + (target - raw) * amount * 0.85f;
+                const float x = 2.0f + ((float) i - frac) * 4.0f;
+                g.setColour (lavender.withAlpha (0.35f));
+                g.fillRect (u.x (x), u.y (56.0f - raw), u.w (2.6f), 1.0f);
+                g.setColour (Colours::gold.withAlpha (0.85f));
+                g.fillRoundedRectangle (u.x (x), u.y (56.0f - hh), u.w (2.6f), u.h (hh), 1.0f);
+            }
+            g.setColour (Colours::goldLight.withAlpha (0.25f + 0.5f * amount));
+            for (float x = 0.0f; x < 120.0f; x += 5.0f)
+                g.fillRect (u.x (x), u.y (56.0f - target) - 0.5f, u.w (2.5f), 1.0f);
+            break;
+        }
+
+        case ModuleKind::octaves:
+        {
+            // The voice's harmonics, and copies an octave or two down (lavender) and up
+            // (pale gold), each as tall as its level.
+            constexpr float ratios[ModuleSettings::numOctaves] = { 0.25f, 0.5f, 1.0f, 2.0f, 3.0f, 4.0f };
+            const juce::Colour colours[ModuleSettings::numOctaves] = { lavender, lavender, Colours::gold, Colours::goldLight,
+                                                                       Colours::goldLight, Colours::cream };
+            const float fundamental = 14.0f;
+            for (int i = 0; i < ModuleSettings::numOctaves; ++i)
+            {
+                const float level = juce::jlimit (0.0f, 1.0f, s.octaveLevels[(size_t) i] * 0.01f);
+                if (level <= 0.0f)
+                    continue;
+                const float spacing = fundamental * ratios[i];
+                const float thickness = ratios[i] < 1.0f ? 1.6f : 2.2f;
+                for (int n = 1; (float) n * spacing < 119.0f; ++n)
+                {
+                    const float x = (float) n * spacing;
+                    const float breathe = 0.85f + 0.15f * std::sin (t * 1.8f + (float) i * 1.3f + (float) n * 0.5f);
+                    const float hh = 50.0f * std::sqrt (level) * breathe / (1.0f + 0.012f * x);
+                    g.setColour (colours[i].withAlpha (0.45f + 0.55f * level));
+                    g.fillRoundedRectangle (u.x (x) - thickness * 0.5f, u.y (56.0f - hh), thickness, u.h (hh), thickness * 0.5f);
+                }
+            }
+            g.setColour (base);
+            g.fillRect (u.x (0.0f), u.y (56.0f), u.w (120.0f), 0.6f);
+            break;
+        }
+
+        case ModuleKind::binaural:
+        {
+            // Two tones, one in each ear, a few Hz apart: where they meet they swell and fade
+            // at the beat rate.
+            const float amount = juce::jlimit (0.0f, 1.0f, s.binauralAmount * 0.01f);
+            const float beat = juce::jlimit (0.1f, 30.0f, s.beatHz);
+            const float drift = t * std::min (beat, 6.0f) * 0.9f;
+            juce::Path left, right, beatPath;
+            for (int i = 0; i <= 120; ++i)
+            {
+                const float x = (float) i;
+                const float phase = x * 0.55f;
+                const float offset = amount * (x / 120.0f * 2.0f * pi + drift);
+                const float yl = 30.0f - 13.0f * std::sin (phase + t * 2.0f);
+                const float yr = 30.0f - 13.0f * std::sin (phase + t * 2.0f + offset);
+                const float swell = std::abs (std::cos (0.5f * offset));
+                const juce::Point<float> pl { u.x (x), u.y (yl) }, pr { u.x (x), u.y (yr) }, pb { u.x (x), u.y (56.0f - 9.0f * swell) };
+                if (i == 0)
+                {
+                    left.startNewSubPath (pl);
+                    right.startNewSubPath (pr);
+                    beatPath.startNewSubPath (pb);
+                }
+                else
+                {
+                    left.lineTo (pl);
+                    right.lineTo (pr);
+                    beatPath.lineTo (pb);
+                }
+            }
+            g.setColour (lavender.withAlpha (0.75f));
+            g.strokePath (right, juce::PathStrokeType (1.1f));
+            g.setColour (Colours::gold.withAlpha (0.9f));
+            g.strokePath (left, juce::PathStrokeType (1.1f));
+            g.setColour (Colours::goldLight.withAlpha (0.5f));
+            g.strokePath (beatPath, juce::PathStrokeType (1.0f));
+            const auto capFont = Fonts::sans (8.5f, false, 0.12f);
+            drawTrackedText (g, "L", { u.x (1.0f), u.y (2.0f), 12.0f, 10.0f }, capFont, juce::Justification::centredLeft, Colours::gold);
+            drawTrackedText (g, "R", { u.x (1.0f) + 10.0f, u.y (2.0f), 12.0f, 10.0f }, capFont, juce::Justification::centredLeft, lavender);
+            break;
+        }
+
+        case ModuleKind::spaceFilter:
+        {
+            // The reverb's wash across the spectrum, kept between Low and High. The dry voice
+            // is untouched, so a faint outline shows what the cut takes away.
+            const float lo = filterUnit (std::min (s.spaceLowHz, s.spaceHighHz)), hi = filterUnit (std::max (s.spaceLowHz, s.spaceHighHz));
+            for (int i = 0; i < 58; ++i)
+            {
+                const float x = 2.0f + (float) i * 2.0f;
+                float hh = 8.0f + 30.0f * (0.6f + 0.4f * hash (i + 57)) * (1.0f - (float) i / 110.0f);
+                hh *= 0.85f + 0.15f * std::sin (t * 1.4f + (float) i * 0.7f);
+                const float gain = cutGain (unitHz (x + 0.6f), s.spaceLowHz, s.spaceHighHz, 2);
+                g.setColour (lavender.withAlpha (0.14f));
+                g.fillRect (u.x (x), u.y (56.0f - hh), std::max (1.0f, u.w (1.2f)), u.h (hh));
+                g.setColour (lavender.interpolatedWith (Colours::goldLight, 0.35f).withAlpha (0.85f * gain));
+                g.fillRect (u.x (x), u.y (56.0f - hh * gain), std::max (1.0f, u.w (1.2f)), u.h (hh * gain));
+            }
+            g.setColour (Colours::gold.withAlpha (0.5f));
+            for (float y = 4.0f; y < 56.0f; y += 5.0f)
+            {
+                g.fillRect (u.x (lo) - 0.5f, u.y (y), 1.0f, u.h (2.5f));
+                g.fillRect (u.x (hi) - 0.5f, u.y (y), 1.0f, u.h (2.5f));
+            }
             break;
         }
     }
@@ -309,52 +464,73 @@ ModuleTile::ModuleTile (ModuleKind k, const juce::String& n, bool fresh)
     }
 }
 
-TextDragger& ModuleTile::addControl (const juce::String& caption, const juce::String& widestValue)
+TextDragger& ModuleTile::addControl (const juce::String& caption)
 {
     controls.push_back (std::make_unique<TextDragger> (caption, false));
-    widest.push_back (widestValue);
+    controls.back()->setRowStyle (true);
     addAndMakeVisible (*controls.back());
     return *controls.back();
 }
 
-void ModuleTile::update (const ModuleSettings& s, float time)
+VerticalFader& ModuleTile::addFader (const juce::String& caption)
+{
+    faders.push_back (std::make_unique<VerticalFader> (caption));
+    addAndMakeVisible (*faders.back());
+    return *faders.back();
+}
+
+PillToggle& ModuleTile::addChoice (const juce::String& text)
+{
+    choices.push_back (std::make_unique<PillToggle> (text, 22.0f, 10.0f));
+    choices.back()->setClickingTogglesState (false);
+    addAndMakeVisible (*choices.back());
+    return *choices.back();
+}
+
+void ModuleTile::update (const ModuleSettings& s, float time, bool resting)
 {
     settings = s;
     t = time;
+    rest = resting;
     const bool on = s.isOn (moduleKind);
     for (auto& c : controls)
+        c->setAlpha (on ? 1.0f : 0.55f);
+    for (auto& f : faders)
+        f->setAlpha (on ? 1.0f : 0.55f);
+    for (auto& c : choices)
         c->setAlpha (on ? 1.0f : 0.55f);
     repaint();
 }
 
 juce::Rectangle<float> ModuleTile::visualArea() const
 {
-    return { 14.0f, 44.0f, (float) getWidth() - 28.0f, 70.0f };
+    return { 14.0f, 40.0f, (float) getWidth() - 28.0f, 56.0f };
 }
 
 void ModuleTile::paint (juce::Graphics& g)
 {
     const auto b = getLocalBounds().toFloat().reduced (0.5f);
     const bool on = settings.isOn (moduleKind);
+    const bool lit = on && ! rest;
 
     g.setColour (Colours::night.withAlpha (0.62f));
     g.fillRoundedRectangle (b, 14.0f);
-    g.setColour (on ? Colours::gold.withAlpha (0.42f) : Colours::muted.withAlpha (0.16f));
+    g.setColour (lit ? Colours::gold.withAlpha (0.42f) : Colours::muted.withAlpha (0.16f));
     g.drawRoundedRectangle (b, 14.0f, 1.0f);
 
     const auto nameFont = Fonts::sans (11.0f, true, 0.18f);
-    drawTrackedText (g, name, { 14.0f, 8.0f, 160.0f, 30.0f }, nameFont, juce::Justification::centredLeft, Colours::gold);
+    drawTrackedText (g, name, { 14.0f, 6.0f, 160.0f, 30.0f }, nameFont, juce::Justification::centredLeft, Colours::gold);
     if (isNew)
     {
         const float x = 14.0f + trackedTextWidth (name, nameFont) + 8.0f;
         const auto tagFont = Fonts::sans (9.0f, true, 0.18f);
-        const juce::Rectangle<float> tag (x, 16.0f, trackedTextWidth ("NEW", tagFont) + 12.0f, 14.0f);
+        const juce::Rectangle<float> tag (x, 14.0f, trackedTextWidth ("NEW", tagFont) + 12.0f, 14.0f);
         g.setColour (lavender);
         g.fillRoundedRectangle (tag, 6.0f);
         drawTrackedText (g, "NEW", tag, tagFont, juce::Justification::centred, Colours::ink);
     }
     if (powerButton == nullptr)
-        drawTrackedText (g, "ALWAYS ON", { (float) getWidth() - 110.0f, 8.0f, 96.0f, 30.0f }, Fonts::sans (9.0f, false, 0.16f),
+        drawTrackedText (g, "ALWAYS ON", { (float) getWidth() - 110.0f, 6.0f, 96.0f, 30.0f }, Fonts::sans (9.0f, false, 0.16f),
                          juce::Justification::centredRight, Colours::muted);
 
     const auto area = visualArea();
@@ -362,204 +538,172 @@ void ModuleTile::paint (juce::Graphics& g)
     g.fillRoundedRectangle (area, 8.0f);
     {
         juce::Graphics::ScopedSaveState save (g);
-        if (! on)
+        if (! lit)
             g.setOpacity (0.35f);
-        drawModuleVisual (g, moduleKind, area.reduced (8.0f, 4.0f), settings, on ? t : 0.0f);
+        drawModuleVisual (g, moduleKind, area.reduced (8.0f, 3.0f), settings, lit ? t : 0.0f);
     }
 }
 
 void ModuleTile::resized()
 {
+    const float w = (float) getWidth();
     if (powerButton != nullptr)
-        powerButton->setBounds (getWidth() - 44, 6, 32, 32);
-    float x = 14.0f;
-    for (size_t i = 0; i < controls.size(); ++i)
+        powerButton->setBounds (getWidth() - 44, 4, 32, 32);
+
+    float y = 104.0f;
+    for (auto& c : controls)
     {
-        const float w = controls[i]->preferredWidth (widest[i]);
-        controls[i]->setBounds (juce::Rectangle<float> (x, 122.0f, w, 28.0f).toNearestInt());
-        x += w + 16.0f;
+        c->setBounds (juce::Rectangle<float> (14.0f, y, w - 28.0f, 24.0f).toNearestInt());
+        y += 26.0f;
+    }
+    if (! faders.empty())
+    {
+        const float fw = (w - 28.0f) / (float) faders.size();
+        for (size_t i = 0; i < faders.size(); ++i)
+            faders[i]->setBounds (juce::Rectangle<float> (14.0f + fw * (float) i, 102.0f, fw, 78.0f).toNearestInt());
+    }
+    if (! choices.empty())
+    {
+        constexpr float gap = 4.0f;
+        const float cw = (w - 28.0f - gap * (float) (choices.size() - 1)) / (float) choices.size();
+        for (size_t i = 0; i < choices.size(); ++i)
+            choices[i]->setBounds (juce::Rectangle<float> (14.0f + (cw + gap) * (float) i, y + 4.0f, cw, 22.0f).toNearestInt());
     }
 }
 
 //==============================================================================
-ResultTile::ResultTile() { setTitle ("The result"); }
-
-void ResultTile::update (const ModuleSettings& s, float time)
+ModulesPanel::ModulesPanel (juce::AudioProcessorValueTreeState& s) : state (s)
 {
-    settings = s;
-    t = time;
-    repaint();
-}
-
-void ResultTile::paint (juce::Graphics& g)
-{
-    const auto b = getLocalBounds().toFloat().reduced (0.5f);
-    g.setColour (Colours::gold.withAlpha (0.06f));
-    g.fillRoundedRectangle (b, 14.0f);
-    {
-        juce::Path outline;
-        outline.addRoundedRectangle (b, 14.0f);
-        juce::Path dashed;
-        const float dashes[] = { 4.0f, 4.0f };
-        juce::PathStrokeType (1.0f).createDashedStroke (dashed, outline, dashes, 2);
-        g.setColour (Colours::gold.withAlpha (0.35f));
-        g.fillPath (dashed);
-    }
-    drawTrackedText (g, "THE RESULT", { 14.0f, 8.0f, 160.0f, 30.0f }, Fonts::sans (11.0f, true, 0.18f),
-                     juce::Justification::centredLeft, Colours::goldLight);
-
-    const auto& s = settings;
-    int count = 0;
-    for (auto k : { ModuleKind::onsets, ModuleKind::shift, ModuleKind::smear, ModuleKind::tone, ModuleKind::harmonics, ModuleKind::filter })
-        count += s.isOn (k) ? 1 : 0;
-    drawTrackedText (g, juce::String (count) + " of 6 modules on", { 14.0f, 122.0f, b.getWidth() - 28.0f, 28.0f },
-                     Fonts::sans (12.0f, false, 0.02f), juce::Justification::centredLeft, Colours::muted);
-
-    // The spectrum of a note at 110 Hz on a log axis (50 Hz to 16 kHz), after each module.
-    const juce::Rectangle<float> area (14.0f, 44.0f, b.getWidth() - 28.0f, 70.0f);
-    g.setColour (well);
-    g.fillRoundedRectangle (area, 8.0f);
-    const auto plot = area.reduced (6.0f, 4.0f);
-    juce::Graphics::ScopedSaveState save (g);
-    g.reduceClipRegion (plot.toNearestInt());
-    const float logSpan = std::log (16000.0f / 50.0f);
-    auto xOf = [&] (float hz) { return plot.getX() + plot.getWidth() * std::log (std::max (hz, 50.0f) / 50.0f) / logSpan; };
-    auto hzOf = [&] (float x) { return 50.0f * std::exp ((x - plot.getX()) / plot.getWidth() * logSpan); };
-    auto envelope = [] (float hz)
-    {
-        auto bump = [hz] (float centre, float spread) { const float d = std::log (hz / centre); return std::exp (-d * d / spread); };
-        return 0.25f + 0.75f * bump (700.0f, 0.18f) + 0.55f * bump (1200.0f, 0.12f) + 0.35f * bump (2700.0f, 0.1f);
-    };
-    auto filterGain = [&] (float hz)
-    {
-        if (! s.filterOn)
-            return 1.0f;
-        const float lo = std::min (s.lowHz, s.highHz), hi = std::max (s.lowHz, s.highHz);
-        const bool inside = hz >= lo && hz <= hi;
-        return inside != (s.lowHz > s.highHz) ? 1.0f : 0.0f;
-    };
-    const float tone = s.toneOn ? juce::jlimit (-1.0f, 1.0f, s.tone * 0.01f) : 0.0f;
-    const float tonal = std::min (1.0f, 1.0f + tone), noise = std::min (1.0f, 1.0f - tone);
-    const float base = plot.getBottom();
-
-    // Breath and noise: between the harmonics, unless Harmonics keeps only those.
-    g.setColour (lavender.withAlpha ((s.harmonicsOn ? 0.1f : 0.4f) * noise));
-    for (float x = plot.getX(); x < plot.getRight(); x += 3.0f)
-    {
-        const float hz = hzOf (x);
-        const float hh = (4.0f + hash ((int) x + 7) * 18.0f * envelope (hz)) * filterGain (hz) * plot.getHeight() / 70.0f;
-        g.fillRect (x, base - hh, 1.6f, hh);
-    }
-
-    // The harmonics, moved by Shift, spread by Smear, kept by Harmonics and Filter.
-    const float shift = s.shiftOn ? s.shiftHz : 0.0f;
-    const float width = 1.2f + (s.smearOn ? s.smear * 0.04f : 0.0f);
-    const int last = s.harmonicsOn ? s.harmonicsCount : 200;
-    const float breathe = 0.8f + 0.2f * std::sin (t * 2.0f);
-    for (int n = 1; n <= last; ++n)
-    {
-        const float hz = 110.0f * (float) n + shift;
-        if (hz > 16000.0f)
-            break;
-        if (hz < 50.0f)
-            continue;
-        const float gain = filterGain (hz) * tonal;
-        if (gain <= 0.0f)
-            continue;
-        const float hh = std::min (plot.getHeight() - 4.0f, plot.getHeight() * 0.9f * envelope (hz) / std::pow ((float) n, 0.35f)) * breathe;
-        const float x = xOf (hz);
-        g.setColour (Colours::goldLight.withAlpha (0.85f * gain));
-        g.fillRoundedRectangle (x - width * 0.5f, base - hh, width, hh, width * 0.5f);
-    }
-    if (s.filterOn)
-    {
-        g.setColour (Colours::gold.withAlpha (0.25f));
-        for (float y = plot.getY(); y < plot.getBottom(); y += 5.0f)
-        {
-            g.fillRect (xOf (s.lowHz) - 0.5f, y, 1.0f, 2.5f);
-            g.fillRect (xOf (s.highHz) - 0.5f, y, 1.0f, 2.5f);
-        }
-    }
-}
-
-//==============================================================================
-AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s) : state (s)
-{
-    setTitle ("Advanced");
+    setTitle ("Modules");
     auto add = [this] (ModuleKind k, const juce::String& n, bool fresh) -> ModuleTile&
     {
         tiles.push_back (std::make_unique<ModuleTile> (k, n, fresh));
         addAndMakeVisible (*tiles.back());
         return *tiles.back();
     };
-    auto attach = [this] (TextDragger& d, const char* id, std::function<juce::String (double)> format, const juce::String& tip)
+    auto setUp = [this] (juce::Slider& d, const char* id, const juce::String& tip)
     {
         sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, id, d));
-        d.formatValue = std::move (format);
         auto* p = state.getParameter (id);
         d.setDoubleClickReturnValue (true, p->convertFrom0to1 (p->getDefaultValue()));
         d.setTooltip (tip);
+    };
+    auto attach = [setUp] (TextDragger& d, const char* id, std::function<juce::String (double)> format, const juce::String& tip)
+    {
+        d.formatValue = std::move (format);
+        setUp (d, id, tip);
     };
     auto power = [this] (ModuleTile& t, const char* id)
     {
         buttonAttachments.push_back (std::make_unique<ButtonAttachment> (state, id, *t.power()));
     };
-    const juce::String minus (juce::CharPointer_UTF8 ("\xe2\x88\x92"));
+    auto percent = [] (double v) { return formatPercent ((float) v); };
+    auto hz = [] (double v) { return formatHz ((float) v); };
 
     auto& window = add (ModuleKind::window, "WINDOW", false);
-    attach (window.addControl ("Size", "680 ms"), ParamID::window, [] (double v) { return formatSeconds ((float) v); },
-            "How long a slice of the voice each moment hears: longer is smoother and slower to change");
+    attach (window.addControl ("Size"), ParamID::window, [] (double v) { return formatSeconds ((float) v); },
+            "How long a slice of the voice each moment hears: longer is smoother and slower to change, up to 40 s");
 
     auto& onsets = add (ModuleKind::onsets, "ONSETS", false);
     power (onsets, ParamID::onsetsOn);
-    attach (onsets.addControl ("Amount", "100%"), ParamID::onsets, [] (double v) { return formatPercent ((float) v); },
+    attach (onsets.addControl ("Amount"), ParamID::onsets, percent,
             "How much consonants and attacks pass at the recorded speed instead of smearing");
 
     auto& shift = add (ModuleKind::shift, "SHIFT", false);
     power (shift, ParamID::shiftOn);
-    attach (shift.addControl ("By", minus + "500 Hz"), ParamID::shift, [] (double v) { return formatShift ((float) v); },
+    attach (shift.addControl ("By"), ParamID::shift, [] (double v) { return formatShift ((float) v); },
             "Moves every partial by the same number of Hz: bell-like, inharmonic shimmer");
 
     auto& smear = add (ModuleKind::smear, "SMEAR", false);
     power (smear, ParamID::smearOn);
-    attach (smear.addControl ("Amount", "100%"), ParamID::smear, [] (double v) { return formatPercent ((float) v); },
-            "Smears each frequency over its neighbours: wider, softer, less exact");
+    attach (smear.addControl ("Amount"), ParamID::smear, percent,
+            "Blurs each harmonic into its neighbours: wider, softer, a wash rather than a note");
 
     auto& tone = add (ModuleKind::tone, "TONE", false);
     power (tone, ParamID::toneOn);
-    attach (tone.addControl ("Balance", "Breath 100"), ParamID::tone, [] (double v) { return formatTone ((float) v); },
+    attach (tone.addControl ("Balance"), ParamID::tone, [] (double v) { return formatTone ((float) v); },
             "Down keeps only the breath and noise; up keeps only the sung harmonics");
 
-    auto& harmonics = add (ModuleKind::harmonics, "HARMONICS", true);
+    auto& harmonics = add (ModuleKind::harmonics, "HARMONICS", false);
     power (harmonics, ParamID::harmonicsOn);
-    attach (harmonics.addControl ("Width", "200 ct"), ParamID::harmonicsWidth, [] (double v) { return formatCents ((float) v); },
+    attach (harmonics.addControl ("Width"), ParamID::harmonicsWidth, [] (double v) { return formatCents ((float) v); },
             "How far either side of each harmonic still passes. Narrow is a pure, glassy chord");
-    attach (harmonics.addControl ("Count", "64"), ParamID::harmonicsCount, [] (double v) { return juce::String (juce::roundToInt (v)); },
+    attach (harmonics.addControl ("Count"), ParamID::harmonicsCount, [] (double v) { return juce::String (juce::roundToInt (v)); },
             "How many of the key's harmonics are kept");
 
-    auto& filter = add (ModuleKind::filter, "FILTER", true);
+    auto& filter = add (ModuleKind::filter, "FILTER", false);
     power (filter, ParamID::filterOn);
-    attach (filter.addControl ("Low", "20.0 kHz"), ParamID::filterLow, [] (double v) { return formatHz ((float) v); },
+    attach (filter.addControl ("Low"), ParamID::filterLow, hz,
             "The bottom of the band that is kept. Set it above High to cut the band out instead");
-    attach (filter.addControl ("High", "20.0 kHz"), ParamID::filterHigh, [] (double v) { return formatHz ((float) v); },
-            "The top of the band that is kept");
+    attach (filter.addControl ("High"), ParamID::filterHigh, hz, "The top of the band that is kept");
+    {
+        const auto names = filterSlopeNames();
+        for (int i = 0; i < 3; ++i)
+        {
+            auto& b = filter.addChoice (names[i].toUpperCase());
+            b.setTooltip (i == 0 ? juce::String ("A hard edge at Low and High")
+                                 : "A gentle slope of " + names[i] + " per octave past Low and High");
+            b.onClick = [this, i] { slopeAttachment->setValueAsCompleteGesture ((float) i); };
+            slopeButtons[(size_t) i] = &b;
+        }
+        slopeAttachment = std::make_unique<juce::ParameterAttachment> (
+            *state.getParameter (ParamID::filterSlope),
+            [this] (float value)
+            {
+                const int chosen = juce::roundToInt (value);
+                for (int i = 0; i < 3; ++i)
+                    slopeButtons[(size_t) i]->setToggleState (i == chosen, juce::dontSendNotification);
+            });
+        slopeAttachment->sendInitialUpdate();
+    }
 
-    addAndMakeVisible (result);
+    auto& compressor = add (ModuleKind::compressor, "COMPRESSOR", true);
+    power (compressor, ParamID::compressorOn);
+    attach (compressor.addControl ("Amount"), ParamID::compressor, percent,
+            "Evens out the loud and quiet moments of the voice, so the pad holds a steady level");
+
+    auto& octaves = add (ModuleKind::octaves, "OCTAVES", true);
+    power (octaves, ParamID::octavesOn);
+    {
+        const char* ids[ModuleSettings::numOctaves] = { ParamID::octaveDown2, ParamID::octaveDown1, ParamID::octaveRoot,
+                                                        ParamID::octaveUp1, ParamID::octaveUp15, ParamID::octaveUp2 };
+        const char* captions[ModuleSettings::numOctaves] = { "-2 oct", "-1 oct", "Root", "+1 oct", "+1 oct 5th", "+2 oct" };
+        const char* tips[ModuleSettings::numOctaves] = { "Two octaves down", "One octave down", "The voice as it is",
+                                                         "One octave up", "An octave and a fifth up", "Two octaves up" };
+        for (int i = 0; i < ModuleSettings::numOctaves; ++i)
+        {
+            auto& f = octaves.addFader (juce::String (juce::CharPointer_UTF8 (captions[i])).replace ("-", juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"))));
+            f.formatValue = percent;
+            setUp (f, ids[i], tips[i]);
+        }
+    }
+
+    auto& binaural = add (ModuleKind::binaural, "BINAURAL", true);
+    power (binaural, ParamID::binauralOn);
+    attach (binaural.addControl ("Rate"), ParamID::binauralRate, [] (double v) { return formatBeat ((float) v); },
+            "How fast the beat between your ears pulses. Best heard on headphones");
+    attach (binaural.addControl ("Amount"), ParamID::binauralAmount, percent, "How much of the beat to mix in");
+
+    auto& spaceFilter = add (ModuleKind::spaceFilter, "SPACE FILTER", true);
+    power (spaceFilter, ParamID::spaceFilterOn);
+    attach (spaceFilter.addControl ("Low"), ParamID::spaceLow, hz, "Cuts the reverb below this, so the low end stays clear");
+    attach (spaceFilter.addControl ("High"), ParamID::spaceHigh, hz, "Cuts the reverb above this, for a darker space");
+
     addAndMakeVisible (resetButton);
     resetButton.setTooltip ("Every module back to how it starts");
     resetButton.onClick = [this] { resetAll(); };
 
     const auto now = readSettings();
     for (auto& t : tiles)
-        t->update (now, 0.0f);
-    result.update (now, 0.0f);
+        t->update (now, 0.0f, false);
 }
 
-AdvancedPanel::~AdvancedPanel() = default;
+ModulesPanel::~ModulesPanel() = default;
 
-ModuleSettings AdvancedPanel::readSettings() const
+ModuleSettings ModulesPanel::readSettings() const
 {
     auto value = [this] (const char* id) { return state.getRawParameterValue (id)->load(); };
+    auto on = [&value] (const char* id) { return value (id) > 0.5f; };
     ModuleSettings s;
     s.windowSeconds = value (ParamID::window);
     s.onsets = value (ParamID::onsets);
@@ -570,20 +714,38 @@ ModuleSettings AdvancedPanel::readSettings() const
     s.harmonicsCount = juce::roundToInt (value (ParamID::harmonicsCount));
     s.lowHz = value (ParamID::filterLow);
     s.highHz = value (ParamID::filterHigh);
-    s.onsetsOn = value (ParamID::onsetsOn) > 0.5f;
-    s.shiftOn = value (ParamID::shiftOn) > 0.5f;
-    s.smearOn = value (ParamID::smearOn) > 0.5f;
-    s.toneOn = value (ParamID::toneOn) > 0.5f;
-    s.harmonicsOn = value (ParamID::harmonicsOn) > 0.5f;
-    s.filterOn = value (ParamID::filterOn) > 0.5f;
+    s.filterSlope = juce::roundToInt (value (ParamID::filterSlope));
+    s.compressor = value (ParamID::compressor);
+    const char* octaveIds[ModuleSettings::numOctaves] = { ParamID::octaveDown2, ParamID::octaveDown1, ParamID::octaveRoot,
+                                                          ParamID::octaveUp1, ParamID::octaveUp15, ParamID::octaveUp2 };
+    for (int i = 0; i < ModuleSettings::numOctaves; ++i)
+        s.octaveLevels[(size_t) i] = value (octaveIds[i]);
+    s.beatHz = value (ParamID::binauralRate);
+    s.binauralAmount = value (ParamID::binauralAmount);
+    s.spaceLowHz = value (ParamID::spaceLow);
+    s.spaceHighHz = value (ParamID::spaceHigh);
+    s.onsetsOn = on (ParamID::onsetsOn);
+    s.shiftOn = on (ParamID::shiftOn);
+    s.smearOn = on (ParamID::smearOn);
+    s.toneOn = on (ParamID::toneOn);
+    s.harmonicsOn = on (ParamID::harmonicsOn);
+    s.filterOn = on (ParamID::filterOn);
+    s.compressorOn = on (ParamID::compressorOn);
+    s.octavesOn = on (ParamID::octavesOn);
+    s.binauralOn = on (ParamID::binauralOn);
+    s.spaceFilterOn = on (ParamID::spaceFilterOn);
     return s;
 }
 
-void AdvancedPanel::resetAll()
+void ModulesPanel::resetAll()
 {
     for (auto* id : { ParamID::window, ParamID::onsetsOn, ParamID::onsets, ParamID::shiftOn, ParamID::shift, ParamID::smearOn, ParamID::smear,
                       ParamID::toneOn, ParamID::tone, ParamID::harmonicsOn, ParamID::harmonicsWidth, ParamID::harmonicsCount,
-                      ParamID::filterOn, ParamID::filterLow, ParamID::filterHigh })
+                      ParamID::filterOn, ParamID::filterLow, ParamID::filterHigh, ParamID::filterSlope,
+                      ParamID::compressorOn, ParamID::compressor, ParamID::octavesOn, ParamID::octaveDown2, ParamID::octaveDown1,
+                      ParamID::octaveRoot, ParamID::octaveUp1, ParamID::octaveUp15, ParamID::octaveUp2,
+                      ParamID::binauralOn, ParamID::binauralRate, ParamID::binauralAmount,
+                      ParamID::spaceFilterOn, ParamID::spaceLow, ParamID::spaceHigh })
     {
         auto* p = state.getParameter (id);
         p->beginChangeGesture();
@@ -592,7 +754,17 @@ void AdvancedPanel::resetAll()
     }
 }
 
-void AdvancedPanel::frame (double seconds, bool animate, float activity)
+void ModulesPanel::setBloomEngine (bool isBloom)
+{
+    if (bloom == isBloom)
+        return;
+    bloom = isBloom;
+    for (auto& t : tiles)
+        t->setAlpha (bloom || worksInBothEngines (t->kind()) ? 1.0f : 0.45f);
+    repaint();
+}
+
+void ModulesPanel::frame (double seconds, bool animate, float activity)
 {
     const auto dt = (float) (lastSeconds < 0.0 ? 0.0 : juce::jlimit (0.0, 0.1, seconds - lastSeconds));
     lastSeconds = seconds;
@@ -601,37 +773,39 @@ void AdvancedPanel::frame (double seconds, bool animate, float activity)
         visualTime += dt * (0.25f + 0.75f * juce::jlimit (0.0f, 1.0f, activity * 4.0f));
     const auto now = readSettings();
     for (auto& t : tiles)
-        t->update (now, visualTime);
-    result.update (now, visualTime);
+        t->update (now, visualTime, ! bloom && ! worksInBothEngines (t->kind()));
 }
 
-void AdvancedPanel::paint (juce::Graphics& g)
+void ModulesPanel::paint (juce::Graphics& g)
 {
     const float w = (float) getWidth();
     const auto capFont = Fonts::sans (12.0f, false, 0.26f);
-    drawTrackedText (g, "ADVANCED", { 0.0f, 0.0f, 120.0f, headingHeight }, capFont, juce::Justification::centredLeft, Colours::gold);
-    const float x = trackedTextWidth ("ADVANCED", capFont) + 18.0f;
-    drawTrackedText (g, "Bloom's modules, in the order the sound passes through them. Tap a light to switch one off.",
-                     { x, 0.0f, w - x - 140.0f, headingHeight }, Fonts::sans (12.0f), juce::Justification::centredLeft, Colours::muted);
+    drawTrackedText (g, "MODULES", { 0.0f, 0.0f, 120.0f, headingHeight }, capFont, juce::Justification::centredLeft, Colours::gold);
+    const float x = trackedTextWidth ("MODULES", capFont) + 18.0f;
+    const juce::String note = bloom ? "How Bloom shapes the sound. Tap a light to switch a module on or off."
+                                    : "Most modules shape Bloom and rest while Grain plays. Binaural and Space filter work in both.";
+    drawTrackedText (g, note, { x, 0.0f, w - x - 140.0f, headingHeight }, Fonts::sans (12.0f), juce::Justification::centredLeft, Colours::muted);
 }
 
-void AdvancedPanel::resized()
+void ModulesPanel::resized()
 {
     const float w = (float) getWidth();
     const float resetW = 32.0f + trackedTextWidth ("RESET ALL", Fonts::sans (12.0f, false, 0.18f)) + 2.0f;
     resetButton.setBounds (juce::Rectangle<float> (w - resetW, 0.0f, resetW, headingHeight).toNearestInt());
 
-    constexpr float gap = 14.0f, rowGap = 12.0f;
-    const float tileW = (w - 3.0f * gap) / 4.0f;
-    const float top = headingHeight + 10.0f;
-    for (size_t i = 0; i <= tiles.size(); ++i)
+    const float tileW = (w - (float) (columns - 1) * gap) / (float) columns;
+    const float top = headingHeight + 8.0f;
+    int cell = 0;
+    for (auto& t : tiles)
     {
-        const int col = (int) i % 4, row = (int) i / 4;
-        const juce::Rectangle<float> r (col * (tileW + gap), top + row * (ModuleTile::height + rowGap), tileW, ModuleTile::height);
-        if (i < tiles.size())
-            tiles[i]->setBounds (r.toNearestInt());
-        else
-            result.setBounds (r.toNearestInt());
+        const int span = t->kind() == ModuleKind::octaves ? 2 : 1;
+        if (cell % columns + span > columns)
+            cell += columns - cell % columns;
+        const int col = cell % columns, row = cell / columns;
+        const juce::Rectangle<float> r ((float) col * (tileW + gap), top + (float) row * (ModuleTile::height + gap),
+                                        tileW * (float) span + gap * (float) (span - 1), ModuleTile::height);
+        t->setBounds (r.toNearestInt());
+        cell += span;
     }
 }
 

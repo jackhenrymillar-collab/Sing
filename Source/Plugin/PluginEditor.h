@@ -16,7 +16,8 @@
 namespace sing
 {
 
-// The blue hour front panel, laid out at 1040 x 620 units to match the mockup.
+// The blue hour front panel, laid out at ui::panelWidth x ui::panelHeight units: the header,
+// the voice's waveform, the loop row, the knobs, every module, and the bottom row.
 // The editor scales it as a whole when the window is resized.
 class SingPanel final : public juce::Component,
                         public juce::FileDragAndDropTarget
@@ -30,9 +31,6 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
-
-    // Bloom's Advanced section, over the waveform and knobs. Only opens in Bloom.
-    void setAdvancedOpen (bool);
 
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
     void fileDragEnter (const juce::StringArray&, int, int) override;
@@ -85,9 +83,7 @@ private:
     // Bottom row
     ui::PillToggle holdButton { "HOLD" };
     ui::PillToggle keepVowelButton { "KEEP VOWEL" };
-    ui::PillToggle advancedButton { "ADVANCED" };
-    ui::AdvancedPanel advanced;
-    bool advancedOpen = false;
+    ui::ModulesPanel modules;
     std::array<std::unique_ptr<ui::PillToggle>, 2> engineButtons;
     std::unique_ptr<juce::ParameterAttachment> engineAttachment;
     bool bloomEngine = false;
@@ -126,7 +122,6 @@ public:
 
     // Draws the panel at a given animation time. For the snapshot tool.
     void renderFrame (double seconds, bool animate) { panel.frame (seconds, animate); }
-    void setAdvancedOpen (bool open) { panel.setAdvancedOpen (open); }
 
 private:
     void onFrame (double timestamp);

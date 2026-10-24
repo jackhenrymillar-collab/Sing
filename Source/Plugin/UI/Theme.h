@@ -3,9 +3,11 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 // Colours, fonts and drawing helpers for the blue hour panel (shared with Overcast's night sky).
-// Sizes are in panel units: the panel is laid out at 1040 x 620 and scaled as a whole.
+// Sizes are in panel units: the panel is laid out at panelWidth x panelHeight and scaled as a whole.
 namespace sing::ui
 {
+
+inline constexpr float panelWidth = 1280.0f, panelHeight = 920.0f;
 
 namespace Colours
 {

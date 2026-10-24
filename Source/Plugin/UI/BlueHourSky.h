@@ -9,7 +9,7 @@ namespace sing::ui
 
 // The panel's background: the blue hour, deep blue overhead fading to a rose and peach glow
 // where the sun has set, with faint stars, slow wisps of cloud and Venus, the evening star.
-// Drawn at 1040 x 620 panel units.
+// Drawn at panelWidth x panelHeight panel units (Theme.h).
 class BlueHourSky
 {
 public:
@@ -22,7 +22,7 @@ public:
     void draw (juce::Graphics&);
 
     // The evening star, which is the bypass switch.
-    static juce::Point<float> starCentre() noexcept { return { 901.0f, 117.0f }; }
+    static juce::Point<float> starCentre() noexcept { return { 1214.0f, 45.0f }; }
     static juce::Rectangle<float> starButtonBounds() noexcept { return juce::Rectangle<float> (48.0f, 48.0f).withCentre (starCentre()); }
 
     // The four-pointed star shape, centred on 0,0 with the given radius.
