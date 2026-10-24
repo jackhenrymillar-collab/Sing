@@ -37,6 +37,11 @@ struct LoopSettings
     // Build Bloom's analysis too (about 0.1 s of work per 10 s of loop, and a few MB).
     bool analyseForBloom = false;
 
+    // Bloom's phases. Off (the default) is the classic method: every bin of every frame gets
+    // a fully random phase, magnitudes kept exactly as analysed. On, harmonics keep their
+    // phases running from frame to frame instead, so a held vowel trembles less.
+    bool bloomLockHarmonics = false;
+
     // The voice's pitch over time, when it has been measured. Voices that move between notes
     // need it: pitch-synchronous processing must follow the note actually sounding, not the
     // root. Without it, pitchPeriod is used everywhere.

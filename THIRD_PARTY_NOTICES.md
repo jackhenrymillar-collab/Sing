@@ -54,7 +54,7 @@ from any implementation.
   (TD-PSOLA).
 - Bloom: spectral time stretching with randomised phases, after Paul Nasca's published
   description of his "extreme time stretch" method. Written from the description only (his
-  implementations are GPL and were not read). Harmonic peaks are kept phase-locked frame to
+  implementations are GPL and were not read). With the optional locked harmonics, peaks are kept phase-locked frame to
   frame, after J. Laroche and M. Dolson, "Improved phase vocoder time-scale modification of
   audio", IEEE Trans. Speech and Audio Processing 7(3), 1999.
 - Air's filters: R. Bristow-Johnson, "Cookbook formulae for audio EQ biquad filter
