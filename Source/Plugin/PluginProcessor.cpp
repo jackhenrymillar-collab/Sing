@@ -37,6 +37,17 @@ SingProcessor::SingProcessor()
     smear = state.getRawParameterValue (ParamID::smear);
     tone = state.getRawParameterValue (ParamID::tone);
     keepVowel = state.getRawParameterValue (ParamID::keepVowel);
+    onsetsOn = state.getRawParameterValue (ParamID::onsetsOn);
+    onsets = state.getRawParameterValue (ParamID::onsets);
+    shiftOn = state.getRawParameterValue (ParamID::shiftOn);
+    smearOn = state.getRawParameterValue (ParamID::smearOn);
+    toneOn = state.getRawParameterValue (ParamID::toneOn);
+    harmonicsOn = state.getRawParameterValue (ParamID::harmonicsOn);
+    harmonicsWidth = state.getRawParameterValue (ParamID::harmonicsWidth);
+    harmonicsCount = state.getRawParameterValue (ParamID::harmonicsCount);
+    filterOn = state.getRawParameterValue (ParamID::filterOn);
+    filterLow = state.getRawParameterValue (ParamID::filterLow);
+    filterHigh = state.getRawParameterValue (ParamID::filterHigh);
     bypassParam = state.getParameter (ParamID::bypass);
 
     for (auto* id : kLoopIds)
@@ -235,9 +246,16 @@ SynthSettings SingProcessor::readSettings() const noexcept
     s.voice.formantSemitones = formant->load();
     s.voice.hold = hold->load() > 0.5f;
     s.voice.glideSeconds = glide->load() * 0.001f;
-    s.voice.shiftHz = shiftHz->load();
-    s.voice.smear = smear->load() * 0.01f;
-    s.voice.tone = tone->load() * 0.01f;
+    const auto isOn = [] (const std::atomic<float>* p) { return p->load() > 0.5f; };
+    s.voice.shiftHz = isOn (shiftOn) ? shiftHz->load() : 0.0f;
+    s.voice.smear = isOn (smearOn) ? smear->load() * 0.01f : 0.0f;
+    s.voice.tone = isOn (toneOn) ? tone->load() * 0.01f : 0.0f;
+    s.voice.onsets = isOn (onsetsOn) ? onsets->load() * 0.01f : 0.0f;
+    s.voice.harmonicsCents = isOn (harmonicsOn) ? harmonicsWidth->load() : 0.0f;
+    s.voice.harmonicsCount = juce::roundToInt (harmonicsCount->load());
+    s.voice.filter = isOn (filterOn);
+    s.voice.lowHz = filterLow->load();
+    s.voice.highHz = filterHigh->load();
     s.voice.keepVowel = keepVowel->load() > 0.5f;
     s.voice.rootHz = rootHz.load();
     s.voice.pitched = rootPitched.load();

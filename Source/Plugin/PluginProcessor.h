@@ -158,6 +158,17 @@ private:
     std::atomic<float>* smear = nullptr;
     std::atomic<float>* tone = nullptr;
     std::atomic<float>* keepVowel = nullptr;
+    std::atomic<float>* onsetsOn = nullptr;
+    std::atomic<float>* onsets = nullptr;
+    std::atomic<float>* shiftOn = nullptr;
+    std::atomic<float>* smearOn = nullptr;
+    std::atomic<float>* toneOn = nullptr;
+    std::atomic<float>* harmonicsOn = nullptr;
+    std::atomic<float>* harmonicsWidth = nullptr;
+    std::atomic<float>* harmonicsCount = nullptr;
+    std::atomic<float>* filterOn = nullptr;
+    std::atomic<float>* filterLow = nullptr;
+    std::atomic<float>* filterHigh = nullptr;
     juce::AudioProcessorParameter* bypassParam = nullptr;
 
     // Output level and bypass ramp smoothly.

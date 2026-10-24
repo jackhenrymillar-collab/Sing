@@ -4,6 +4,7 @@
 #include "UI/BloomSky.h"
 #include "UI/BlueHourSky.h"
 #include "UI/Controls.h"
+#include "UI/ModulePanel.h"
 #include "UI/Theme.h"
 #include "UI/WaveformView.h"
 
@@ -29,6 +30,9 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+
+    // Bloom's Advanced section, over the waveform and knobs. Only opens in Bloom.
+    void setAdvancedOpen (bool);
 
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
     void fileDragEnter (const juce::StringArray&, int, int) override;
@@ -81,12 +85,13 @@ private:
     // Bottom row
     ui::PillToggle holdButton { "HOLD" };
     ui::PillToggle keepVowelButton { "KEEP VOWEL" };
+    ui::PillToggle advancedButton { "ADVANCED" };
+    ui::AdvancedPanel advanced;
+    bool advancedOpen = false;
     std::array<std::unique_ptr<ui::PillToggle>, 2> engineButtons;
     std::unique_ptr<juce::ParameterAttachment> engineAttachment;
     bool bloomEngine = false;
     ui::TextDragger voicesDragger { "Voices", true }, glideDragger { "Glide", true }, outputDragger { "Output", true };
-    // Bloom's spectral controls, shown next to the engine switch while Bloom is on.
-    ui::TextDragger windowDragger { "Window", true }, shiftDragger { "Shift", true }, smearDragger { "Smear", true }, toneDragger { "Tone", true };
 
     ui::SaveOverlay saveOverlay;
 
@@ -121,6 +126,7 @@ public:
 
     // Draws the panel at a given animation time. For the snapshot tool.
     void renderFrame (double seconds, bool animate) { panel.frame (seconds, animate); }
+    void setAdvancedOpen (bool open) { panel.setAdvancedOpen (open); }
 
 private:
     void onFrame (double timestamp);

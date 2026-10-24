@@ -130,6 +130,8 @@ void BloomVoice::start (const LoopSource& src, double bufferPosition, uint32_t s
     newest = 0;   // a silent frame; the first real one is built into the next slot
     realFrame.fill (false);
     firstFrame = true;
+    combMakeup = 0.0f;
+    powerBeforeComb = powerAfterComb = 0.0;
     pos = 0;
     primeCredit = 0.0;
     priming = true;
@@ -274,7 +276,28 @@ void BloomVoice::beginFrame() noexcept
                              : 0.0f;
         f.gainLeft = layer.gainLeft * outputGain;
         f.gainRight = layer.gainRight * outputGain;
+        f.harmonicsPerBin = params.harmonicsCents > 0.0f ? outBinHz / std::max (1.0f, params.rootHz * pitch) : 0.0f;
         f.peakBin = -1;
+    }
+
+    powerBeforeComb = powerAfterComb = 0.0;
+
+    // Harmonics: a width in cents, as a fraction of the frequency (cents / (1200 / ln 2)).
+    harmonicsWidth = std::clamp (params.harmonicsCents, 0.0f, 1200.0f) / 1731.234f;
+    harmonicsCount = std::max (1, params.harmonicsCount);
+
+    // Filter: each edge a twelfth of an octave either side of its frequency.
+    filterOn = params.filter;
+    if (filterOn)
+    {
+        const float edge = 1.05946309f;   // 2^(1/12)
+        const float lowBin = std::max (params.lowHz, 1.0f) / outBinHz, highBin = std::max (params.highHz, 1.0f) / outBinHz;
+        filterStop = lowBin > highBin;
+        const float lo = std::min (lowBin, highBin), hi = std::max (lowBin, highBin);
+        riseFrom = lo / edge;
+        riseTo = lo * edge;
+        fallFrom = hi / edge;
+        fallTo = hi * edge;
     }
 
     envScale = outBinHz / (std::max (params.formantRatio, 1.0e-3f) * analysis->envelopeHz());
@@ -305,6 +328,40 @@ void BloomVoice::beginFrame() noexcept
         buildFrameAdvance += (realTime - buildFrameAdvance) * (double) pull;
     }
     readPosition = std::fmod (readPosition + buildFrameAdvance, length);
+}
+
+float BloomVoice::filterGain (int bin) const noexcept
+{
+    // Raised-cosine edges on a log frequency scale.
+    constexpr float pi = 3.14159265f;
+    const float k = (float) bin;
+    float rise = 1.0f, fall = 1.0f;
+    if (k <= riseFrom)
+        rise = 0.0f;
+    else if (k < riseTo)
+        rise = 0.5f - 0.5f * std::cos (pi * std::log (k / riseFrom) / std::log (riseTo / riseFrom));
+    if (k >= fallTo)
+        fall = 0.0f;
+    else if (k > fallFrom)
+        fall = 0.5f + 0.5f * std::cos (pi * std::log (k / fallFrom) / std::log (fallTo / fallFrom));
+    const float pass = std::min (rise, fall);
+    return filterStop ? 1.0f - pass : pass;
+}
+
+float BloomVoice::combGain (const LayerFrame& f, int bin) const noexcept
+{
+    // Distance to the nearest of the key's harmonics, in bins, against a width that grows
+    // with the harmonic (the same number of cents) but never shrinks below most of a bin,
+    // or short windows would miss the low harmonics altogether.
+    const float x = (float) bin * f.harmonicsPerBin;
+    if (x > (float) harmonicsCount + 0.5f)
+        return 0.0f;
+    const float n = std::max (1.0f, std::floor (x + 0.5f));
+    const float binsPerHarmonic = 1.0f / f.harmonicsPerBin;
+    const float distance = (x - n) * binsPerHarmonic;
+    const float width = std::max (0.75f, n * binsPerHarmonic * harmonicsWidth);
+    const float d = distance / width;
+    return d * d > 9.0f ? 0.0f : std::exp2 (-d * d);
 }
 
 void BloomVoice::buildBins (int from, int to) noexcept
@@ -407,7 +464,20 @@ void BloomVoice::buildBins (int from, int to) noexcept
                 }
                 fine = fineAt (b, t);
             }
-            const float a = fine * env;
+            float a = fine * env;
+            if (filterOn)
+                a *= filterGain (k);
+            if (f.harmonicsPerBin > 0.0f)
+            {
+                // Harmonics: note the power before and after the comb, for the make-up.
+                const float c = combGain (f, k);
+                const float p = a * a * (f.gainLeft * f.gainLeft + f.gainRight * f.gainRight);
+                powerBeforeComb += p;
+                powerAfterComb += p * c * c;
+                a *= c;
+            }
+            if (a <= 0.0f)
+                continue;
 
             // Phase. Breath and noise get a new random phase every frame: the smear. A
             // harmonic keeps running at its own frequency from frame to frame, so a held
@@ -477,9 +547,21 @@ void BloomVoice::runUnit (int unit) noexcept
         float* fl = framesLeft[(size_t) building()].data();
         float* fr = framesRight[(size_t) building()].data();
         const int stride = maxSize / size;
+        // Harmonics keeps only a narrow comb, which can leave little of a voice whose pitch
+        // wanders off the key's harmonics. Make up what the comb took from this frame (by at
+        // most 24 dB, eased from frame to frame), so switching it on keeps the level.
+        if (powerBeforeComb > 0.0)
+        {
+            const double lost = powerAfterComb > 0.0 ? std::sqrt (powerBeforeComb / powerAfterComb) : 16.0;
+            const auto target = (float) std::clamp (lost, 1.0, 16.0);
+            combMakeup = combMakeup <= 0.0f ? target : combMakeup + 0.5f * (target - combMakeup);
+        }
+        else
+            combMakeup = 0.0f;   // off: the next time it is on, start from that frame's own value
+        const float scale = windowScale * std::max (combMakeup, 1.0f);
         for (int i = 0; i < size; ++i)
         {
-            const float w = synthesisWindow[(size_t) (i * stride)] * windowScale;
+            const float w = synthesisWindow[(size_t) (i * stride)] * scale;
             fl[i] *= w;
             fr[i] *= w;
         }

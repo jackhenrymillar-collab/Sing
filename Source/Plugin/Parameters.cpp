@@ -49,6 +49,16 @@ juce::String formatTone (float t)
     return (r > 0 ? juce::String ("Pure ") : juce::String ("Breath ")) + juce::String (std::abs (r));
 }
 
+juce::String formatHz (float hz)
+{
+    if (hz < 999.5f)
+        return juce::String (juce::roundToInt (hz)) + " Hz";
+    const float k = hz / 1000.0f;
+    return juce::String (k, k < 9.95f ? 1 : 0) + " kHz";
+}
+
+juce::String formatCents (float c) { return juce::String (juce::roundToInt (c)) + " ct"; }
+
 juce::String formatGlide (float ms)
 {
     return ms < 995.0f ? juce::String (juce::roundToInt (ms)) + " ms" : juce::String (ms / 1000.0f, 1) + " s";
@@ -111,6 +121,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::window, v }, "Window", skewed (0.1f, 1.4f, 0.68f), 0.68f, withText (formatSeconds)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::tone, v }, "Tone", Range { -100.0f, 100.0f, 1.0f }, 0.0f, withText (formatTone)));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::keepVowel, v }, "Keep Vowel", true));
+    // Bloom's Advanced modules. The switches for the older modules start on, so older
+    // sessions sound as they did; Harmonics and Filter start off.
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::onsetsOn, v }, "Onsets On", true));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::onsets, v }, "Onsets", Range { 0.0f, 100.0f, 0.1f }, 100.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::shiftOn, v }, "Shift On", true));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::smearOn, v }, "Smear On", true));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::toneOn, v }, "Tone On", true));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::harmonicsOn, v }, "Harmonics On", false));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::harmonicsWidth, v }, "Harmonics Width", skewed (1.0f, 200.0f, 25.0f), 25.0f, withText (formatCents)));
+    layout.add (std::make_unique<AudioParameterInt> (ParameterID { ParamID::harmonicsCount, v }, "Harmonics Count", 1, 64, 16));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::filterOn, v }, "Filter On", false));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::filterLow, v }, "Filter Low", skewed (20.0f, 20000.0f, 640.0f), 120.0f, withText (formatHz)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::filterHigh, v }, "Filter High", skewed (20.0f, 20000.0f, 640.0f), 8000.0f, withText (formatHz)));
     // Also the host's bypass switch (see SingProcessor::getBypassParameter). Clicking the evening star toggles it.
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::bypass, v }, "Bypass", false));
 

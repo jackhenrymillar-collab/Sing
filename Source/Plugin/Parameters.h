@@ -30,6 +30,18 @@ namespace ParamID
     inline constexpr auto tone       = "tone";
     inline constexpr auto window     = "window";
     inline constexpr auto keepVowel  = "keepvowel";
+    // Bloom's Advanced modules: an on/off switch for each, and the two newest modules.
+    inline constexpr auto onsetsOn   = "onsetson";
+    inline constexpr auto onsets     = "onsets";
+    inline constexpr auto shiftOn    = "shifton";
+    inline constexpr auto smearOn    = "smearon";
+    inline constexpr auto toneOn     = "toneon";
+    inline constexpr auto harmonicsOn    = "harmonicson";
+    inline constexpr auto harmonicsWidth = "harmonicswidth";
+    inline constexpr auto harmonicsCount = "harmonicscount";
+    inline constexpr auto filterOn   = "filteron";
+    inline constexpr auto filterLow  = "filterlow";
+    inline constexpr auto filterHigh = "filterhigh";
 }
 
 // The order matches LoopDirection.
@@ -48,5 +60,7 @@ juce::String formatGlide (float ms);
 juce::String formatShift (float hz);
 juce::String formatTone (float t);
 juce::String formatDecibels (float db);
+juce::String formatHz (float hz);
+juce::String formatCents (float cents);
 
 } // namespace sing

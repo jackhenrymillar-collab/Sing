@@ -576,3 +576,108 @@ TEST_CASE ("Bloom: swapping to a loop with fewer analysis frames mid-note stays 
     CHECK (peak < 4.0f);
     CHECK (rms (after.left.data() + 48000, 48000) > 0.01);
 }
+
+namespace
+{
+// A loop of white noise, like a breath with no pitch.
+std::shared_ptr<const LoopSource> noiseSource()
+{
+    std::vector<float> v ((size_t) (4 * 48000));
+    uint32_t noise = 7;
+    for (auto& x : v)
+    {
+        noise = noise * 1664525u + 1013904223u;
+        x = 0.2f * ((float) (noise >> 8) / 8388608.0f - 1.0f);
+    }
+    LoopSettings s;
+    s.start = 48000;
+    s.length = 2 * 48000;
+    s.fade = 4800;
+    s.analyseForBloom = true;
+    const float* ch[] = { v.data() };
+    return LoopSource::build (ch, 1, (int) v.size(), sr, s);
+}
+
+std::vector<float> playBloomWith (const std::shared_ptr<const LoopSource>& src, BloomVoice::Parameters p)
+{
+    BloomVoice voice;
+    voice.prepare (sr);
+    p.speed = 0.3f;
+    p.numLayers = 1;
+    p.layers[0].gainLeft = p.layers[0].gainRight = 0.5f;
+    voice.setParameters (p);
+    voice.start (*src, 0.0, 11u, 0.0f);
+    std::vector<float> l ((size_t) 5 * 48000), r ((size_t) 5 * 48000);
+    for (size_t i = 0; i < l.size(); i += 256)
+        voice.render (l.data() + i, r.data() + i, (int) std::min<size_t> (256, l.size() - i));
+    return l;
+}
+
+// The share of a render's power (50 Hz to 16 kHz) that lies between lo and hi Hz.
+double bandShare (const std::vector<float>& x, int from, int n, double lo, double hi)
+{
+    constexpr int size = 8192;
+    sing::RealFFT fft (size);
+    std::vector<float> frame ((size_t) size), spectrum ((size_t) size + 2);
+    double total = 0.0, inside = 0.0;
+    for (int start = from; start + size <= from + n; start += size / 2)
+    {
+        for (int i = 0; i < size; ++i)
+            frame[(size_t) i] = x[(size_t) (start + i)] * (float) (0.5 - 0.5 * std::cos (6.283185307179586 * i / size));
+        fft.forward (frame.data(), spectrum.data());
+        for (int k = 1; k <= size / 2; ++k)
+        {
+            const double hz = k * sr / size;
+            if (hz < 50.0 || hz > 16000.0)
+                continue;
+            const double pw = (double) spectrum[(size_t) (2 * k)] * spectrum[(size_t) (2 * k)]
+                            + (double) spectrum[(size_t) (2 * k + 1)] * spectrum[(size_t) (2 * k + 1)];
+            total += pw;
+            if (hz >= lo && hz <= hi)
+                inside += pw;
+        }
+    }
+    return inside / (total + 1.0e-30);
+}
+} // namespace
+
+TEST_CASE ("Bloom: Harmonics keeps only the key's harmonics, up to Count")
+{
+    auto src = noiseSource();
+    BloomVoice::Parameters p;
+    p.rootHz = 200.0f;
+    const auto plain = playBloomWith (src, p);
+    p.harmonicsCents = 10.0f;
+    p.harmonicsCount = 10;
+    const auto combed = playBloomWith (src, p);
+    const double before = partialShare (plain, 48000, 4 * 48000, 200.0, 0.0);
+    const double after = partialShare (combed, 48000, 4 * 48000, 200.0, 0.0);
+    const double above = bandShare (combed, 48000, 4 * 48000, 2200.0, 16000.0);
+    std::printf ("  Bloom Harmonics on noise: power on 200 Hz harmonics %.2f before, %.2f after; above harmonic 10 %.4f\n", before, after, above);
+    CHECK (before < 0.15);
+    CHECK (after > 0.6);
+    CHECK (above < 0.01);
+    // The comb keeps a sliver of the noise, and the make-up brings it back to level.
+    const double levelBefore = level (Stereo { plain, plain }, 48000, 4 * 48000);
+    const double levelAfter = level (Stereo { combed, combed }, 48000, 4 * 48000);
+    std::printf ("  Bloom Harmonics level: %.1f dB before, %.1f dB after\n", levelBefore, levelAfter);
+    CHECK (std::abs (levelAfter - levelBefore) < 3.0);
+}
+
+TEST_CASE ("Bloom: Filter keeps its band, or cuts it out with Low above High")
+{
+    auto src = noiseSource();
+    BloomVoice::Parameters p;
+    p.filter = true;
+    p.lowHz = 500.0f;
+    p.highHz = 2000.0f;
+    const auto pass = playBloomWith (src, p);
+    std::swap (p.lowHz, p.highHz);
+    const auto stop = playBloomWith (src, p);
+    const double kept = bandShare (pass, 48000, 4 * 48000, 420.0, 2400.0);
+    const double cut = bandShare (stop, 48000, 4 * 48000, 600.0, 1650.0);
+    std::printf ("  Bloom Filter 500 Hz to 2 kHz: %.4f of the power inside; reversed: %.4f inside\n", kept, cut);
+    CHECK (kept > 0.98);
+    CHECK (cut < 0.01);
+    CHECK (level (Stereo { pass, pass }, 48000, 4 * 48000) > -60.0);
+}
