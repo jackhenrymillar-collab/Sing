@@ -98,7 +98,7 @@ combined result. Granular ignores all of them.
 
 | Module | Parameters | Range | What it does |
 | --- | --- | --- | --- |
-| Window | `window` | 0.1 to 1.4 s (default 0.68 s) | The analysis and synthesis window, rounded to a power of two samples and never longer than half the loop, so Stretch always has frames to move through. Longer is smoother and slower to change. Changing it rebuilds the analysis; notes already sounding keep their window. |
+| Window | `window` | 0.1 to 1.4 s (default 0.68 s) | The analysis and synthesis window, rounded to a power of two samples and never longer than 98% of the loop. Near that limit Stretch becomes very subtle, because every frame holds most of the loop. Longer is smoother and slower to change. Changing it rebuilds the analysis; notes already sounding keep their window. |
 | Onsets | `onsetson`, `onsets` | 0 to 100 % | How strongly an onset pulls the read position to the recorded speed (step 5 above). |
 | Shift | `shifton`, `shift` | -500 to +500 Hz | Frequency shift: every partial moves by the same number of Hz, so harmonics become inharmonic (bell-like). The vowel envelope stays put. |
 | Smear | `smearon`, `smear` | 0 to 100 % | Frequency spread: each bin reads from a random point up to 12 % (about two semitones) away, a new one every frame, so the spectrum blurs. |
