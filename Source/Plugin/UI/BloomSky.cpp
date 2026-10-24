@@ -1,5 +1,6 @@
 #include "BloomSky.h"
 #include "BlueHourSky.h"
+#include "Theme.h"
 
 #include <cmath>
 
@@ -8,7 +9,9 @@ namespace sing::ui
 
 namespace
 {
-    constexpr float kWidth = 1040.0f, kHeight = 620.0f;
+    constexpr float kWidth = panelWidth, kHeight = panelHeight;
+    // The haze and the flower were first placed on a 1040 x 620 panel; they stretch to fit.
+    constexpr float kStretchX = kWidth / 1040.0f, kStretchY = kHeight / 620.0f;
     constexpr double twoPi = 6.28318530717958647692;
     constexpr int kLights = 84;
 
@@ -181,7 +184,7 @@ void BloomSky::drawLights (juce::Graphics& g, double t) const
         // side to side on two slow waves as it rises.
         const float column = std::fmod (l.column + hash01 (i, round), 1.0f);
         const auto wander = static_cast<float> (twoPi * (l.swayRate * t + l.phase));
-        const float x = -20.0f + 1080.0f * column + l.sway * std::sin (wander) + 0.5f * l.sway * std::sin (2.3f * wander + 1.0f);
+        const float x = -20.0f + (kWidth + 40.0f) * column + l.sway * std::sin (wander) + 0.5f * l.sway * std::sin (2.3f * wander + 1.0f);
         const float y = kHeight + 20.0f - u * (kHeight - 60.0f) + 8.0f * std::sin (1.7f * wander);
 
         // Fade in at the bottom and out high in the sky, and pulse like a firefly: mostly a
@@ -224,8 +227,11 @@ void BloomSky::draw (juce::Graphics& g)
         g.fillEllipse (s.x, s.y, s.size, s.size);
     }
 
+    g.saveState();
+    g.addTransform (juce::AffineTransform::scale (kStretchX, kStretchY));
     drawHaze (g, t);
     drawFlower (g, t);
+    g.restoreState();
     drawLights (g, t);
     BlueHourSky::drawEveningStar (g, t, motion, bypassed);
 }

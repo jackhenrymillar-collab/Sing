@@ -30,6 +30,7 @@ add_library (SingDSP STATIC
     Source/DSP/Bloom/BloomVoice.cpp
     Source/DSP/Effects/Air.cpp
     Source/DSP/Effects/Space.cpp
+    Source/DSP/Effects/Binaural.cpp
     Source/DSP/Common/RealFFT.cpp
     Source/DSP/Stretch/StretchEngine.cpp
     Source/DSP/Stretch/GranularEngine.cpp

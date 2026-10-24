@@ -8,7 +8,9 @@ namespace sing::ui
 
 namespace
 {
-    constexpr float kWidth = 1040.0f, kHeight = 620.0f;
+    constexpr float kWidth = panelWidth, kHeight = panelHeight;
+    // The sky was first drawn for a 1040 x 620 panel; its glow and clouds stretch to fit.
+    constexpr float kStretchX = kWidth / 1040.0f, kStretchY = kHeight / 620.0f;
     constexpr double twoPi = 6.28318530717958647692;
 
     // A slow, smooth 0..1 wave, like the mockup's ease-in-out keyframes.
@@ -86,6 +88,9 @@ void BlueHourSky::draw (juce::Graphics& g)
         g.fillEllipse (s.x, s.y, s.size, s.size);
     }
 
+    g.saveState();
+    g.addTransform (juce::AffineTransform::scale (kStretchX, kStretchY));
+
     // The glow where the sun went down, breathing between 0.55 and 0.9 over 6 s.
     {
         const float alpha = motion ? 0.55f + 0.35f * breathe (t, 6.0) : 0.7f;
@@ -115,6 +120,7 @@ void BlueHourSky::draw (juce::Graphics& g)
         wisp ({ -40.0f + 60.0f + drift, 102.0f, 420.0f, 26.0f }, juce::Colour (0xffc8aadc).withAlpha (0.22f));
         wisp ({ -40.0f + 560.0f + drift, 92.0f, 360.0f, 22.0f }, juce::Colour (0xffe6bedc).withAlpha (0.18f));
     }
+    g.restoreState();
 
     drawEveningStar (g, t, motion, bypassed);
 }

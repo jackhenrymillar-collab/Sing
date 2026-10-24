@@ -13,7 +13,7 @@ namespace sing::ui
 // colourful fireflies float up from the bottom, pulsing softly as they wander, and fade
 // out high in the sky. Playing makes the lights glow brighter.
 //
-// Drawn at 1040 x 620 panel units. With motion off (Reduce Motion) it is one still picture.
+// Drawn at panelWidth x panelHeight panel units (Theme.h). With motion off (Reduce Motion) it is one still picture.
 class BloomSky
 {
 public:

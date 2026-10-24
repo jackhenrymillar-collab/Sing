@@ -10,14 +10,16 @@
 namespace sing::ui
 {
 
-// Bloom's Advanced section: one square per module, each with its on/off light, its controls
-// and a small moving picture of what it does, plus an eighth square that draws what they all
-// add up to. It covers the waveform and knobs while it is open (layout B of the mockups).
-enum class ModuleKind { window, onsets, shift, smear, tone, harmonics, filter };
+// The modules on the main panel: one tile per module, each with its on/off light, its controls
+// and a small moving picture of what it does. Most shape Bloom only and rest while Grain plays;
+// Binaural and Space filter work in both engines.
+enum class ModuleKind { window, onsets, shift, smear, tone, harmonics, filter, compressor, octaves, binaural, spaceFilter };
 
 // Every module's settings, in parameter units, for the pictures.
 struct ModuleSettings
 {
+    static constexpr int numOctaves = 6;
+
     float windowSeconds = 0.68f;
     float onsets = 100.0f;           // percent
     float shiftHz = 0.0f;
@@ -26,10 +28,19 @@ struct ModuleSettings
     float harmonicsCents = 25.0f;
     int harmonicsCount = 16;
     float lowHz = 120.0f, highHz = 8000.0f;
+    int filterSlope = 0;             // 0 sharp, 1 6 dB per octave, 2 12 dB per octave
+    float compressor = 50.0f;        // percent
+    std::array<float, numOctaves> octaveLevels { 0.0f, 0.0f, 100.0f, 0.0f, 0.0f, 0.0f };   // percent
+    float beatHz = 4.0f, binauralAmount = 100.0f;
+    float spaceLowHz = 150.0f, spaceHighHz = 9000.0f;
     bool onsetsOn = true, shiftOn = true, smearOn = true, toneOn = true, harmonicsOn = false, filterOn = false;
+    bool compressorOn = false, octavesOn = false, binauralOn = false, spaceFilterOn = false;
 
     bool isOn (ModuleKind) const noexcept;
 };
+
+// True for the modules that work in both engines.
+bool worksInBothEngines (ModuleKind) noexcept;
 
 // A round on/off light with a power symbol.
 class PowerButton final : public juce::ToggleButton
@@ -46,13 +57,16 @@ public:
 
     ModuleKind kind() const noexcept { return moduleKind; }
     PowerButton* power() noexcept { return powerButton.get(); }   // null for Window, which is always on
-    TextDragger& addControl (const juce::String& caption, const juce::String& widestValue);
+    TextDragger& addControl (const juce::String& caption);
+    VerticalFader& addFader (const juce::String& caption);
+    PillToggle& addChoice (const juce::String& text);
 
-    void update (const ModuleSettings&, float time);
+    // resting: Grain is playing and this module only shapes Bloom.
+    void update (const ModuleSettings&, float time, bool resting);
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    static constexpr float height = 160.0f;
+    static constexpr float height = 188.0f;
 
 private:
     juce::Rectangle<float> visualArea() const;
@@ -62,41 +76,34 @@ private:
     bool isNew;
     std::unique_ptr<PowerButton> powerButton;
     std::vector<std::unique_ptr<TextDragger>> controls;
-    std::vector<juce::String> widest;
+    std::vector<std::unique_ptr<VerticalFader>> faders;
+    std::vector<std::unique_ptr<PillToggle>> choices;
     ModuleSettings settings;
     float t = 0.0f;
-};
-
-// The eighth square: the spectrum after every module that is on.
-class ResultTile final : public juce::Component
-{
-public:
-    ResultTile();
-    void update (const ModuleSettings&, float time);
-    void paint (juce::Graphics&) override;
-
-private:
-    ModuleSettings settings;
-    float t = 0.0f;
+    bool rest = false;
 };
 
 // Draws one module's picture into area. Exposed for the snapshot tool and tests of layout.
 void drawModuleVisual (juce::Graphics&, ModuleKind, juce::Rectangle<float> area, const ModuleSettings&, float time);
 
-class AdvancedPanel final : public juce::Component
+class ModulesPanel final : public juce::Component
 {
 public:
-    explicit AdvancedPanel (juce::AudioProcessorValueTreeState&);
-    ~AdvancedPanel() override;
+    explicit ModulesPanel (juce::AudioProcessorValueTreeState&);
+    ~ModulesPanel() override;
 
-    // Once per display frame while open. activity (0 to 1) is how loud the notes are: the
-    // pictures move faster while something plays.
+    // Once per display frame. activity (0 to 1) is how loud the notes are: the pictures move
+    // faster while something plays.
     void frame (double seconds, bool animate, float activity);
+    void setBloomEngine (bool);
 
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    static constexpr float headingHeight = 32.0f;
+    static constexpr float headingHeight = 28.0f;
+    static constexpr int columns = 6;
+    static constexpr float gap = 12.0f;
+    static float preferredHeight() noexcept { return headingHeight + 8.0f + 2.0f * ModuleTile::height + gap; }
 
 private:
     ModuleSettings readSettings() const;
@@ -104,8 +111,9 @@ private:
 
     juce::AudioProcessorValueTreeState& state;
     std::vector<std::unique_ptr<ModuleTile>> tiles;
-    ResultTile result;
     HeaderButton resetButton { "RESET ALL" };
+    std::array<PillToggle*, 3> slopeButtons {};
+    std::unique_ptr<juce::ParameterAttachment> slopeAttachment;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
@@ -114,6 +122,7 @@ private:
 
     double lastSeconds = -1.0;
     float visualTime = 0.0f;
+    bool bloom = true;
 };
 
 } // namespace sing::ui

@@ -171,9 +171,11 @@ void SingVoice::start (const LoopSource& src, int midiNote, float velocity, cons
         std::array<CopyShape, (size_t) maxCopies> shapes {};
         const float norm = copyShapes (settings.spread, shapes);
         bloom.setParameters (bloomParameters (shapes, norm));
-        bloom.start (src, 0.0, seedBase * 2654435761u, (float) (seedBase % 97u) / 97.0f);
-        return;
+        // Every Bloom note buffer in use (only with very long windows): play granular.
+        bloomNote = bloom.start (src, 0.0, seedBase * 2654435761u, (float) (seedBase % 97u) / 97.0f);
     }
+    if (bloomNote)
+        return;
 
     for (int i = 0; i < maxCopies; ++i)
         if (copyShape (i, settings.spread).weight > 0.0f)
@@ -480,6 +482,10 @@ BloomVoice::Parameters SingVoice::bloomParameters (const std::array<CopyShape, (
     p.filter = voiceSettings.filter;
     p.lowHz = voiceSettings.lowHz;
     p.highHz = voiceSettings.highHz;
+    p.filterSlope = voiceSettings.filterSlope;
+    p.compressor = voiceSettings.compressor;
+    p.octaves = voiceSettings.octaves;
+    p.octaveLevels = voiceSettings.octaveLevels;
     p.numLayers = 0;
     for (int i = 0; i < maxCopies; ++i)
     {

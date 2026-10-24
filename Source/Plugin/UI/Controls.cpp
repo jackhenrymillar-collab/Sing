@@ -288,6 +288,20 @@ void TextDragger::paint (juce::Graphics& g)
 
     const auto capColour = sunset ? Colours::dusk : (active ? Colours::text : Colours::soft);
     const auto valueColour = sunset ? Colours::ink : (active ? Colours::ivory : Colours::text);
+    if (row)
+    {
+        const auto line = b.withTrimmedBottom (6.0f);
+        drawTrackedText (g, cap, line, Fonts::sans (10.0f, false, 0.16f), juce::Justification::centredLeft, capColour);
+        const auto value = formatValue ? formatValue (getValue()) : getTextFromValue (getValue());
+        drawTrackedText (g, value, line, Fonts::sans (12.5f, false, 0.03f), juce::Justification::centredRight, valueColour);
+        const juce::Rectangle<float> track (b.getX(), b.getBottom() - 4.0f, b.getWidth(), 3.0f);
+        g.setColour (Colours::muted.withAlpha (0.18f));
+        g.fillRoundedRectangle (track, 1.5f);
+        const auto proportion = (float) valueToProportionOfLength (getValue());
+        g.setColour (Colours::gold.withAlpha (active ? 1.0f : 0.85f));
+        g.fillRoundedRectangle (track.withWidth (std::max (3.0f, track.getWidth() * proportion)), 1.5f);
+        return;
+    }
     drawTrackedText (g, cap, b, capFont, juce::Justification::centredLeft, capColour);
     const auto value = formatValue ? formatValue (getValue()) : getTextFromValue (getValue());
     drawTrackedText (g, value, b.withTrimmedLeft (capWidth), valueFont, juce::Justification::centredLeft, valueColour);
@@ -405,6 +419,48 @@ void BlueHourLookAndFeel::drawCornerResizer (juce::Graphics& g, int w, int h, bo
     const auto fw = static_cast<float> (w), fh = static_cast<float> (h);
     for (float i = 0.3f; i < 1.0f; i += 0.3f)
         g.drawLine (fw * i, fh, fw, fh * i, 1.0f);
+}
+
+} // namespace sing::ui
+
+namespace sing::ui
+{
+
+//==============================================================================
+VerticalFader::VerticalFader (const juce::String& captionText) : caption (captionText)
+{
+    setSliderStyle (juce::Slider::LinearVertical);
+    setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+    setSliderSnapsToMousePosition (false);
+    setVelocityModeParameters (0.25, 1, 0.0, true, juce::ModifierKeys::shiftModifier);
+    setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
+    setRepaintsOnMouseActivity (true);
+    setTitle (caption);
+    onValueChange = [this] { repaint(); };
+}
+
+void VerticalFader::paint (juce::Graphics& g)
+{
+    const auto b = getLocalBounds().toFloat();
+    const bool active = isMouseOverOrDragging();
+    const auto value = formatValue ? formatValue (getValue()) : getTextFromValue (getValue());
+    drawTrackedText (g, value, b.withHeight (14.0f), Fonts::sans (11.5f, false, 0.02f), juce::Justification::centred,
+                     active ? Colours::ivory : Colours::text);
+    drawTrackedText (g, caption.toUpperCase(), b.withTrimmedTop (b.getHeight() - 14.0f), Fonts::sans (9.5f, false, 0.1f),
+                     juce::Justification::centred, active ? Colours::text : Colours::muted);
+
+    const juce::Rectangle<float> track (b.getCentreX() - 3.0f, 20.0f, 6.0f, b.getHeight() - 40.0f);
+    g.setColour (Colours::muted.withAlpha (0.18f));
+    g.fillRoundedRectangle (track, 3.0f);
+    const auto proportion = (float) valueToProportionOfLength (getValue());
+    const float y = track.getBottom() - track.getHeight() * proportion;
+    g.setColour (Colours::gold.withAlpha (0.85f));
+    g.fillRoundedRectangle (track.withTop (y), 3.0f);
+    const auto thumb = juce::Rectangle<float> (14.0f, 14.0f).withCentre ({ track.getCentreX(), y });
+    if (proportion > 0.0f)
+        fillBlurredDisc (g, thumb.getCentre(), 6.0f, 6.0f, Colours::gold.withAlpha (active ? 0.6f : 0.4f));
+    g.setColour (Colours::goldLight);
+    g.fillEllipse (thumb);
 }
 
 } // namespace sing::ui

@@ -48,6 +48,22 @@ SingProcessor::SingProcessor()
     filterOn = state.getRawParameterValue (ParamID::filterOn);
     filterLow = state.getRawParameterValue (ParamID::filterLow);
     filterHigh = state.getRawParameterValue (ParamID::filterHigh);
+    filterSlope = state.getRawParameterValue (ParamID::filterSlope);
+    compressorOn = state.getRawParameterValue (ParamID::compressorOn);
+    compressorAmount = state.getRawParameterValue (ParamID::compressor);
+    octavesOn = state.getRawParameterValue (ParamID::octavesOn);
+    octaveDown2 = state.getRawParameterValue (ParamID::octaveDown2);
+    octaveDown1 = state.getRawParameterValue (ParamID::octaveDown1);
+    octaveRoot = state.getRawParameterValue (ParamID::octaveRoot);
+    octaveUp1 = state.getRawParameterValue (ParamID::octaveUp1);
+    octaveUp15 = state.getRawParameterValue (ParamID::octaveUp15);
+    octaveUp2 = state.getRawParameterValue (ParamID::octaveUp2);
+    binauralOn = state.getRawParameterValue (ParamID::binauralOn);
+    binauralRate = state.getRawParameterValue (ParamID::binauralRate);
+    binauralAmount = state.getRawParameterValue (ParamID::binauralAmount);
+    spaceFilterOn = state.getRawParameterValue (ParamID::spaceFilterOn);
+    spaceLow = state.getRawParameterValue (ParamID::spaceLow);
+    spaceHigh = state.getRawParameterValue (ParamID::spaceHigh);
     bypassParam = state.getParameter (ParamID::bypass);
 
     for (auto* id : kLoopIds)
@@ -140,6 +156,9 @@ void SingProcessor::rebuildLoop()
     loop.pitchTrack = v->getPitchTrack();
     loop.analyseForBloom = juce::roundToInt (value (ParamID::engine)) == 1;
     loop.bloomWindowSeconds = value (ParamID::window);
+    // Bloom's note buffers are made at the size notes will play at.
+    loop.hostSampleRate = getSampleRate();
+    loop.bloomNotes = SingSynth::voicePool;
 
     builder.request ({ v, loop, from, length });
 }
@@ -206,11 +225,19 @@ bool SingProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 
 void SingProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
+    // Bloom's note buffers depend on the host rate: rebuild the loop for a new one.
+    if (std::abs (sampleRate - preparedRate) > 0.5)
+        loopDirty = true;
+    preparedRate = sampleRate;
     synth.prepare (sampleRate, juce::jmax (1, samplesPerBlock));
     air.prepare (sampleRate);
     air.setAmount (airAmount->load() * 0.01f);
     air.reset();
+    binaural.prepare (sampleRate);
+    binaural.set (binauralOn->load() > 0.5f, binauralRate->load(), binauralAmount->load() * 0.01f);
+    binaural.reset();
     space.prepare (sampleRate, juce::jmax (512, samplesPerBlock));
+    space.setFilter (spaceFilterOn->load() > 0.5f, spaceLow->load(), spaceHigh->load());
     space.setAmount (spaceAmount->load() * 0.01f);
     space.reset();
     monoRight.assign ((size_t) juce::jmax (512, samplesPerBlock), 0.0f);
@@ -256,6 +283,11 @@ SynthSettings SingProcessor::readSettings() const noexcept
     s.voice.filter = isOn (filterOn);
     s.voice.lowHz = filterLow->load();
     s.voice.highHz = filterHigh->load();
+    s.voice.filterSlope = juce::roundToInt (filterSlope->load());
+    s.voice.compressor = isOn (compressorOn) ? compressorAmount->load() * 0.01f : 0.0f;
+    s.voice.octaves = isOn (octavesOn);
+    s.voice.octaveLevels = { octaveDown2->load() * 0.01f, octaveDown1->load() * 0.01f, octaveRoot->load() * 0.01f,
+                             octaveUp1->load() * 0.01f, octaveUp15->load() * 0.01f, octaveUp2->load() * 0.01f };
     s.voice.keepVowel = keepVowel->load() > 0.5f;
     s.voice.rootHz = rootHz.load();
     s.voice.pitched = rootPitched.load();
@@ -296,6 +328,7 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         synth.allSoundOff();
         space.reset();
         air.reset();
+        binaural.reset();
     }
 
     // Pick up a rebuilt loop, and hand back any old one no note uses any more.
@@ -358,11 +391,14 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         }
     }
 
-    // Air, then Space: the reverb hears the lifted top and the breath.
+    // Binaural beats, then Air, then Space: the reverb hears the lifted top and the breath.
+    binaural.set (binauralOn->load() > 0.5f, binauralRate->load(), binauralAmount->load() * 0.01f);
     air.setAmount (airAmount->load() * 0.01f);
     space.setAmount (spaceAmount->load() * 0.01f);
+    space.setFilter (spaceFilterOn->load() > 0.5f, spaceLow->load(), spaceHigh->load());
     if (right != nullptr)
     {
+        binaural.process (left, right, numSamples);
         air.process (left, right, numSamples);
         space.process (left, right, numSamples);
     }
