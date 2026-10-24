@@ -512,7 +512,7 @@ void SingPanel::frame (double seconds, bool animate)
     lastFrameTime = seconds;
     if (! animate)
         bloomMix = target;
-    else if (bloomMix != target)
+    else if (std::abs (bloomMix - target) > 0.0f)
     {
         bloomMix += (target > bloomMix ? 1.0f : -1.0f) * dt;
         bloomMix = juce::jlimit (0.0f, 1.0f, bloomMix);

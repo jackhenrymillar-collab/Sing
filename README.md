@@ -36,6 +36,7 @@ without a host.
 
 - [docs/stretch-engine.md](docs/stretch-engine.md): Stretch and Hold.
 - [docs/voices-spread-formant.md](docs/voices-spread-formant.md): voices, notes, Spread and Formant.
+- [docs/bloom-space-air.md](docs/bloom-space-air.md): the Bloom engine, Air and Space.
 
 The factory voices are stand-ins for now, made by formant synthesis, until the recorded voices
-are ready. Air, Space, Tape, Octaves, Movement, Find a loop and Bloom are still to come.
+are ready. Tape, Octaves, Movement and Find a loop are still to come.

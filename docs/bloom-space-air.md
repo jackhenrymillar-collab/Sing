@@ -1,0 +1,136 @@
+# Bloom, Air and Space
+
+Bloom is Sing's second Stretch engine: it smears the voice into a smooth, endless glow. Air
+and Space are effects on the whole instrument, after the voices. The DSP is plain C++ in
+`Source/DSP/Bloom` and `Source/DSP/Effects`; the tests are `Tests/BloomTests.cpp` and
+`Tests/EffectsTests.cpp`.
+
+## Bloom
+
+The **GRAIN / BLOOM** switch on the panel (parameter `engine`) picks the engine for new notes.
+A note keeps its engine until it ends.
+
+Bloom is written from Paul Nasca's published description of his extreme time-stretch method
+(the GPL implementations were not read). The idea: cut the sound into long windows, keep only
+how loud each frequency is, and rebuild it with new phases. Smearing the phases is what turns a
+voice into a glow. Sing adds what a playable vocal pad needs on top.
+
+### Analysis (`BloomAnalysis`)
+
+When Bloom is selected, every loop is analysed as it is built (on the loop builder thread):
+
+- **Frames:** Hann windows of about 0.68 s (32768 samples at 48 kHz), every eighth of a window.
+  Shorter loops get shorter windows, so a window never holds the loop twice. The windows read
+  round the loop, so the seam is already blended.
+- **Envelope:** the vowel's shape, drawn through the tops of the harmonics (a running maximum
+  over about 1.5 harmonics, then smoothed). It is kept at 1024 points per frame and is floored
+  60 dB below its loudest point.
+- **Fine structure:** the magnitudes with the envelope divided out (the harmonics and the
+  breath), stored as 16-bit log values.
+- **Harmonics:** peaks at least 6 dB over the local floor. Vibrato splits a harmonic into close
+  sidebands a few Hz apart, and played back steadily those beat against each other at the
+  vibrato rate (a 6 dB tremble on a held vowel). So peaks within 3 % (and at least 8 Hz) of a
+  stronger one join it. Each harmonic is redrawn as one clean main lobe of the window, at the
+  centre of its energy, holding all of it.
+
+A 2 s loop takes about 25 ms to analyse.
+
+### Playing (`BloomVoice`)
+
+Each note builds a new frame every quarter window (about 0.17 s) and overlap-adds it with a
+Hann window:
+
+1. For each Spread copy, read the analysis at the copy's position:
+   - the **harmonics** move with the pitch;
+   - **breath and noise** stay where they were recorded on a pitched voice (they have no pitch
+     to move), but move with the pitch on unpitched voices;
+   - the **envelope** moves with Formant only, so the vowel stays put across the keys.
+2. **Phases:**
+   - Breath and noise get new random phases every frame: this is the smear.
+   - Harmonics keep running at their own frequency from frame to frame, with a small random
+     nudge for shimmer. Fully random phases make a clear vowel tremble by 10 dB or more. This
+     is phase locking in the style of Laroche and Dolson.
+   - Left and right differ by a fixed random offset per harmonic, scaled by Spread (Width).
+     At Spread 0 the note still holds up in mono: the left-right correlation is about 0.9.
+3. Two inverse FFTs per frame (left and right), however many Spread copies there are.
+4. Move the read position on by a hop times the Stretch speed. Hold stops it.
+
+**Level.** The note matches the loop's level at the root, and stays within about 3 dB of it
+over two octaves of keys and the whole Stretch range, as granular does. Harmonics moved up land
+on quieter or louder parts of the envelope; `harmonicsGain` compares the envelope at the
+harmonics as recorded and as played, and makes up the difference.
+
+**Starting a note.** The first frame takes about 85 ms to build (paced so a chord can start
+at once). It then starts a hop into its window, with make-up gain while the overlap fills, so
+the note sounds straight away at close to full level.
+
+**CPU.** The work for each frame is cut into about a hundred small steps (a slice of bins, or
+one stage of an FFT), spread evenly over the hop. Each note starts its steps at its own point
+in the hop, so a chord's notes take turns. On the cloud Linux build machine (-O2, 128-sample
+blocks):
+
+| 16 notes | Average | Worst block (budget 2.67 ms) |
+| --- | --- | --- |
+| Spread 0 | 8 % of a core | about 1.4 ms |
+| Spread 1 | 22 % of a core | about 2.3 ms |
+
+A Bloom note whose loop has no analysis yet (just switched, still building) plays granular.
+
+### Measured
+
+| Test | Result |
+| --- | --- |
+| Pitch at -12, 0, +12 semitones | within 1 % |
+| Level against the loop, over keys and Stretch | -2.1 to +0.8 dB |
+| Held "ah" with vibrato, 50 ms slices | 0.3 dB (was 6.5 dB before folding the sidebands) |
+| Note start | 84 ms |
+| Spread 0 to 1, left-right correlation | 0.91 to about -0.2 |
+
+On Jack's psy vox sample, Bloom at Stretch 0.8 stays within 1.4 to 3.4 dB over 50 ms slices
+across two octaves of keys (granular: 6 to 10 dB).
+
+## Air
+
+A gentle lift at the top, with a breath layer that follows the voice:
+
+- a high shelf at 8 kHz, up to +8 dB;
+- soft noise, band-passed to 3 to 10 kHz, whose level follows the voice through an envelope
+  follower (5 ms up, 120 ms down). It breathes with the notes, is silent between them, and
+  sits about 22 dB under the voice at full Air. Left and right get different noise.
+
+At 0 the signal passes untouched.
+
+## Space
+
+A long reverb on the whole instrument: Overcast's Aurora machine, copied from Overcast
+(`Source/DSP/Effects/Aurora.h` and `ReverbBlocks.h`). Aurora's core follows Cloud Seed by
+Ghost Note Audio (MIT, see THIRD_PARTY_NOTICES.md). One knob sets everything:
+
+| Space | Size | Decay | Pre-delay | Wet | Dry |
+| --- | --- | --- | --- | --- | --- |
+| 0 | off: the signal passes untouched | | | | |
+| 0.25 | small | 3.6 s | 18 ms | 0.31 | 0.98 |
+| 0.5 | medium | 6.3 s | 25 ms | 0.57 | 0.9 |
+| 1 | huge | 20 s | 40 ms | 0.8 | 0.6 |
+
+The reverb hears the voice through a 150 Hz low cut, so long tails stay clear. When Space is
+turned down to 0 the wet fades out over about half a second, then the reverb stops running.
+Measured decay at 0.25, 0.5 and 1: 4.5 s, 7.8 s and 20 s. Air and Space together use about 5 %
+of a core.
+
+The signal runs synth, then Air, then Space, then Output.
+
+## The panel
+
+With Bloom selected, the blue hour fades over about a second into the Bloom sky
+(`UI/BloomSky`): a dark night with drifting colour haze, a huge faint flower turning behind
+the knobs, and about 80 firefly lights rising from the bottom. Each firefly has a heart of
+one colour and a faint halo of the opposite colour (six complementary pairs, slowly turning
+round the colour wheel). They pulse in their own rhythms and glow brighter while notes sound.
+With Reduce Motion on, the sky is one still picture.
+
+## Presets
+
+Two new factory presets use Bloom: **Bloom Halo** and **Slow Petals**. The four earlier
+presets now set Air and Space too. Air, Space and the engine default to 0 and Grain, so
+sessions and user presets saved before this change sound as they did.
