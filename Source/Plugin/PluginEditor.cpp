@@ -534,6 +534,12 @@ void SingPanel::frame (double seconds, bool animate)
     }
     waveform.setLights (lights, animate, seconds);
 
+    // On the dark Bloom sky the bottom row and the voice's shadow switch to light colours.
+    const bool dark = bloomMix > 0.5f;
+    for (auto* d : { &voicesDragger, &glideDragger, &outputDragger })
+        d->setOnSunset (! dark);
+    waveform.setDarkSky (dark);
+
     // The Bloom sky glows brighter while notes sound.
     float level = 0.0f;
     for (const auto& f : found)

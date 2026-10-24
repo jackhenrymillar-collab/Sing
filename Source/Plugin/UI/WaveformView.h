@@ -27,6 +27,10 @@ public:
 
     void setVoice (VoiceData::Ptr);
 
+    // On the Bloom sky the voice outside the loop is drawn in a pale violet instead of
+    // the blue hour's dark shadow, which would vanish into the night.
+    void setDarkSky (bool dark);
+
     // One light per Spread copy of a sounding note, newest note first and its centre copy first.
     struct Light
     {
@@ -69,6 +73,7 @@ private:
     juce::Image bars;
     float barsScale = 0.0f, barsStart = -1.0f, barsLength = -1.0f;
     juce::int64 barsVoice = -1;
+    bool darkSky = false;
 
     void paintLights (juce::Graphics&, juce::Rectangle<float> region);
     void rememberTails (double nowMs);

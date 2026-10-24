@@ -32,18 +32,30 @@ namespace
         return static_cast<float> (h & 0xffffff) / 16777215.0f;
     }
 
-    // The lights' colours: magenta, violet, cyan, gold, coral and a soft lime, all turned
-    // slowly round the colour wheel over time.
-    const juce::Colour kPalette[] = { juce::Colour (0xffff5ec4), juce::Colour (0xffa678ff), juce::Colour (0xff5fe3ff),
-                                      juce::Colour (0xffffd36e), juce::Colour (0xffff8a70), juce::Colour (0xffc6ff8a) };
+    // The lights come in complementary pairs: each light's heart is one colour and its halo
+    // the colour opposite it on the wheel. The pairs turn slowly round the wheel over time.
+    struct Pair { juce::Colour heart, halo; };
+    const Pair kPairs[] = {
+        { juce::Colour (0xffff3fb4), juce::Colour (0xff3dffa0) },   // magenta and spring green
+        { juce::Colour (0xff2fd9ff), juce::Colour (0xffff7a3d) },   // cyan and orange
+        { juce::Colour (0xff8a4dff), juce::Colour (0xffffe14d) },   // violet and yellow
+        { juce::Colour (0xff3d6bff), juce::Colour (0xffffb23d) },   // blue and amber
+        { juce::Colour (0xffff3d5e), juce::Colour (0xff2fffe0) },   // red-pink and turquoise
+        { juce::Colour (0xffc6ff3d), juce::Colour (0xffb43dff) },   // lime and purple
+    };
+    constexpr int kNumPairs = static_cast<int> (std::size (kPairs));
+
+    Pair lightPair (float hue, double t)
+    {
+        const int i = std::min (kNumPairs - 1, static_cast<int> (hue * kNumPairs));
+        const auto turn = static_cast<float> (std::fmod (t / 300.0, 1.0));
+        return { kPairs[i].heart.withRotatedHue (turn), kPairs[i].halo.withRotatedHue (turn) };
+    }
 
     juce::Colour lightColour (float hue, double t)
     {
-        const int n = static_cast<int> (std::size (kPalette));
-        const float slot = hue * static_cast<float> (n);
-        const int i = static_cast<int> (slot) % n;
-        const auto c = kPalette[i].interpolatedWith (kPalette[(i + 1) % n], slot - std::floor (slot));
-        return c.withRotatedHue (static_cast<float> (std::fmod (t / 240.0, 1.0)));
+        const auto p = lightPair (std::fmod (hue * 2.0f, 1.0f), t);
+        return hue * 2.0f < 1.0f ? p.heart : p.halo;
     }
 
     // A soft round glow: bright in the middle, fading to nothing at the edge.
@@ -94,11 +106,11 @@ void BloomSky::rebuildBackground (float pixelScale)
     juce::Graphics g (background);
     g.addTransform (juce::AffineTransform::scale (pixelScale));
 
-    juce::ColourGradient sky (juce::Colour (0xff12082e), 0.0f, 0.0f, juce::Colour (0xffffb071), 0.0f, kHeight, false);
-    sky.addColour (0.30, juce::Colour (0xff2a0f52));
-    sky.addColour (0.55, juce::Colour (0xff561a6c));
-    sky.addColour (0.75, juce::Colour (0xff9e3079));
-    sky.addColour (0.90, juce::Colour (0xffe85a7c));
+    juce::ColourGradient sky (juce::Colour (0xff05030f), 0.0f, 0.0f, juce::Colour (0xff3a1438), 0.0f, kHeight, false);
+    sky.addColour (0.30, juce::Colour (0xff0c0724));
+    sky.addColour (0.55, juce::Colour (0xff170b33));
+    sky.addColour (0.75, juce::Colour (0xff22103c));
+    sky.addColour (0.90, juce::Colour (0xff2e1240));
     g.setGradientFill (sky);
     g.fillAll();
 }
@@ -108,10 +120,10 @@ void BloomSky::drawHaze (juce::Graphics& g, double t) const
     // Four great soft clouds of colour drifting on slow loops, each slowly changing hue.
     struct Haze { juce::Colour colour; float alpha, cx, cy, ax, ay, w, h; double px, py; };
     const Haze haze[] = {
-        { juce::Colour (0xff3fd8d0), 0.22f, 260.0f, 170.0f, 160.0f, 50.0f, 640.0f, 260.0f, 61.0, 47.0 },
-        { juce::Colour (0xff9b5cff), 0.26f, 760.0f, 230.0f, 180.0f, 60.0f, 700.0f, 300.0f, 73.0, 53.0 },
-        { juce::Colour (0xffff4fb3), 0.22f, 480.0f, 420.0f, 220.0f, 40.0f, 820.0f, 300.0f, 89.0, 59.0 },
-        { juce::Colour (0xffffd27a), 0.16f, 560.0f, 600.0f, 200.0f, 30.0f, 900.0f, 260.0f, 97.0, 67.0 },
+        { juce::Colour (0xff3fd8d0), 0.14f, 260.0f, 170.0f, 160.0f, 50.0f, 640.0f, 260.0f, 61.0, 47.0 },
+        { juce::Colour (0xff9b5cff), 0.16f, 760.0f, 230.0f, 180.0f, 60.0f, 700.0f, 300.0f, 73.0, 53.0 },
+        { juce::Colour (0xffff4fb3), 0.13f, 480.0f, 420.0f, 220.0f, 40.0f, 820.0f, 300.0f, 89.0, 59.0 },
+        { juce::Colour (0xffffd27a), 0.08f, 560.0f, 600.0f, 200.0f, 30.0f, 900.0f, 260.0f, 97.0, 67.0 },
     };
     for (const auto& h : haze)
     {
@@ -172,13 +184,14 @@ void BloomSky::drawLights (juce::Graphics& g, double t) const
         const float bloom = std::pow (std::sin (juce::MathConstants<float>::pi * std::min (1.0f, u * 1.4f)), 0.6f);
         const float fade = u < 0.08f ? u / 0.08f : std::pow (1.0f - u, 0.8f);
         const float radius = l.radius * (0.45f + 0.75f * bloom);
-        const float alpha = 0.55f * fade * brightness;
+        const float alpha = 0.62f * fade * brightness;
         if (alpha < 0.005f)
             continue;
 
-        const auto colour = lightColour (std::fmod (l.hue + 0.15f * u, 1.0f), t);
+        const auto pair = lightPair (l.hue, t);
+        const auto colour = pair.heart;
         const juce::Point<float> c (x, y);
-        glow (g, c, radius * 2.2f, colour, alpha * 0.45f);
+        glow (g, c, radius * 2.4f, pair.halo, alpha * 0.6f);
 
         if (l.petals && bloom > 0.3f)
         {
@@ -192,14 +205,15 @@ void BloomSky::drawLights (juce::Graphics& g, double t) const
                 g.saveState();
                 g.addTransform (juce::AffineTransform::rotation (a + juce::MathConstants<float>::halfPi, pc.x, pc.y));
                 g.addTransform (juce::AffineTransform::scale (0.55f, 1.0f, pc.x, pc.y));
-                glow (g, pc, r * 0.75f, colour.withRotatedHue (0.08f * static_cast<float> (p)), alpha * 0.5f);
+                glow (g, pc, r * 0.75f, (p % 2 == 0 ? pair.heart : pair.halo), alpha * 0.55f);
                 g.restoreState();
             }
         }
 
-        glow (g, c, radius, colour.brighter (0.4f), alpha);
-        g.setColour (juce::Colour (0xfffff8f0).withAlpha (std::min (1.0f, alpha * 1.6f)));
-        g.fillEllipse (juce::Rectangle<float> (radius * 0.32f, radius * 0.32f).withCentre (c));
+        glow (g, c, radius, colour.brighter (0.25f), alpha);
+        // A small bright heart, tinted with the light's colour rather than white.
+        g.setColour (colour.brighter (0.9f).withAlpha (std::min (1.0f, alpha * 1.4f)));
+        g.fillEllipse (juce::Rectangle<float> (radius * 0.24f, radius * 0.24f).withCentre (c));
     }
 }
 

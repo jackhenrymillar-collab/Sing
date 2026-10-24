@@ -47,6 +47,15 @@ WaveformView::WaveformView (juce::AudioProcessorValueTreeState& s)
     fadeAttachment.sendInitialUpdate();
 }
 
+void WaveformView::setDarkSky (bool dark)
+{
+    if (dark == darkSky)
+        return;
+    darkSky = dark;
+    barsScale = 0.0f;   // redraw the bars
+    repaint();
+}
+
 void WaveformView::setVoice (VoiceData::Ptr v)
 {
     if (v != voice)
@@ -134,7 +143,7 @@ void WaveformView::rebuildBars (float pixelScale)
         juce::ColourGradient litFill (Colours::cream, 0.0f, midY - 55.0f, Colours::cream, 0.0f, midY + 55.0f, false);
         litFill.addColour (0.5, Colours::gold);
         gl.setGradientFill (litFill);
-        gu.setColour (Colours::shadow.withAlpha (0.72f));
+        gu.setColour (darkSky ? juce::Colour (0xff8a78c8).withAlpha (0.42f) : Colours::shadow.withAlpha (0.72f));
 
         for (int i = 0; i < kBars; ++i)
         {
