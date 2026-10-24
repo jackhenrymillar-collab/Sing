@@ -18,6 +18,7 @@ void FormantShifter::prepare (double sampleRate, float maxPeriodSeconds)
 {
     rate = sampleRate > 0.0 ? sampleRate : 48000.0;
     maxPeriod = std::max (32.0f, maxPeriodSeconds * (float) rate);
+    dcCoeff = (float) std::exp (-2.0 * 3.14159265358979 * 20.0 / rate);
 
     // Grains read back as far as about 4.5 periods before now.
     const int needed = (int) std::ceil (maxPeriod * 8.0f) + 64;
@@ -48,6 +49,7 @@ int FormantShifter::start (float periodSamples, float ratio) noexcept
 
     std::fill (ringL.begin(), ringL.end(), 0.0f);
     std::fill (ringR.begin(), ringR.end(), 0.0f);
+    dcInL = dcOutL = dcInR = dcOutR = 0.0f;
     for (auto& g : grains)
         g.active = false;
     now = 0;
@@ -62,7 +64,9 @@ void FormantShifter::setPeriod (float periodSamples) noexcept
 
 void FormantShifter::setRatio (float ratio) noexcept
 {
-    targetRatio = std::clamp (ratio, minRatio, maxRatio);
+    // Within 5 cents of no change, make no change: the shifter then passes the sound
+    // through untouched instead of re-cutting it into grains.
+    targetRatio = std::abs (ratio - 1.0f) < 0.003f ? 1.0f : std::clamp (ratio, minRatio, maxRatio);
 }
 
 void FormantShifter::scheduleGrains() noexcept
@@ -177,6 +181,21 @@ void FormantShifter::process (const float* inL, const float* inR, float* outL, f
                     if (stereo)
                         yR[s] += w * read (ringR, at);
                 }
+            }
+        }
+
+        for (int s = 0; s < len; ++s)
+        {
+            const float xl = yL[s];
+            dcOutL = xl - dcInL + dcCoeff * dcOutL;
+            dcInL = xl;
+            yL[s] = dcOutL;
+            if (stereo)
+            {
+                const float xr = yR[s];
+                dcOutR = xr - dcInR + dcCoeff * dcOutR;
+                dcInR = xr;
+                yR[s] = dcOutR;
             }
         }
 

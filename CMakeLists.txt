@@ -26,6 +26,7 @@ include (FetchContent)
 # ---------------------------------------------------------------------------
 add_library (SingDSP STATIC
     Source/DSP/Stretch/LoopSource.cpp
+    Source/DSP/Common/RealFFT.cpp
     Source/DSP/Stretch/StretchEngine.cpp
     Source/DSP/Stretch/GranularEngine.cpp
     Source/DSP/Voice/FormantShifter.cpp

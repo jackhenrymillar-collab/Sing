@@ -108,7 +108,7 @@ private:
     void startCopy (int index) noexcept;
     float targetSemitones() const noexcept;
     float pitchRatio (int copy) const noexcept;
-    float periodFor (float ratio) const noexcept;
+    float periodFor (const GranularEngine& engine, float ratio) const noexcept;
     float formantRatioNow() const noexcept;
 
     double hostRate = 48000.0;

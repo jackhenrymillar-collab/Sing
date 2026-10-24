@@ -130,11 +130,16 @@ float SingVoice::formantRatioNow() const noexcept
     return std::exp2 ((voiceSettings.formantSemitones - semitones) / 12.0f);
 }
 
-float SingVoice::periodFor (float ratio) const noexcept
+float SingVoice::periodFor (const GranularEngine& engine, float ratio) const noexcept
 {
-    if (! voiceSettings.pitched || voiceSettings.rootHz <= 0.0f)
+    // The note actually sounding where the copy reads, which for a voice that moves between
+    // notes is not the root. Using the root there would lay a second, wrong set of harmonics
+    // over the sound.
+    const float voicePeriod = engine.currentPeriod();
+    if (voicePeriod < 2.0f || source == nullptr)
         return 0.0f;
-    return (float) (hostRate / ((double) voiceSettings.rootHz * (double) ratio));
+    const double hz = source->sampleRate() / (double) voicePeriod;
+    return (float) (hostRate / (hz * (double) ratio));
 }
 
 void SingVoice::start (const LoopSource& src, int midiNote, float velocity, const VoiceSettings& settings,
@@ -174,7 +179,7 @@ void SingVoice::startCopy (int index) noexcept
     c.engine.start (*source, std::fmod (offset, (double) source->size()));
 
     const float formantRatio = formantRatioNow();
-    int prime = c.shifter.start (periodFor (ratio), formantRatio);
+    int prime = c.shifter.start (periodFor (c.engine, ratio), formantRatio);
 
     // The shifter runs latency() samples behind its input. Feed it that much of the note up
     // front, so its output starts exactly when the note does.
@@ -313,7 +318,7 @@ void SingVoice::renderSubBlock (float* left, float* right, int n) noexcept
         const float ratio = pitchRatio (i);
         c.engine.setSettings (granular);
         c.engine.setParameters ({ speed, ratio, voiceSettings.hold });
-        c.shifter.setPeriod (periodFor (ratio));
+        c.shifter.setPeriod (periodFor (c.engine, ratio));
         c.shifter.setRatio (formantRatio);
 
         std::fill_n (c.left.data(), n, 0.0f);

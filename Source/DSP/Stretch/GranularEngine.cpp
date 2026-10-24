@@ -145,7 +145,9 @@ double GranularEngine::alignToPhase (double target) const noexcept
     // Pitch-synchronous placement: move the grain by whole pitch periods so it starts in phase
     // with the rest of the cloud. Overlapping grains of a steady vowel then add up cleanly
     // instead of beating against each other, while jitter still varies what each grain reads.
-    const double period = (double) current->settings().pitchPeriod;
+    // The period where the grain reads, so a voice that moves between notes stays in phase
+    // with the note it is actually singing there.
+    const double period = (double) current->periodAt (target);
     if (! settings.phaseAlign || period < 2.0)
         return target;
 
@@ -176,7 +178,7 @@ float GranularEngine::levelCompensation (float jitterSamples) const noexcept
     // Estimate how far apart neighbouring grains read, and blend between the two.
     const float o = (float) settings.overlap;
     const float interval = (float) grainLength / o;
-    const bool aligned = settings.phaseAlign && current->settings().pitchPeriod >= 2.0f;
+    const bool aligned = settings.phaseAlign && current->periodAt (head) >= 2.0f;
     const float apart = std::abs (speed - rate) * (float) sourceScale * interval + 0.667f * jitterSamples;
     float d = std::clamp (apart / (decorrelationSeconds * (float) current->sampleRate()), 0.0f, 1.0f);
 
@@ -310,9 +312,14 @@ GranularEngine::Settings StretchKnob::toGranularSettings (float knob, GranularEn
     const float t = std::clamp (knob, 0.0f, 1.0f);
     auto lerp = [t] (float a, float b) { return a + (b - a) * t; };
 
+    // At 0 the grains read exactly where the head is, so Stretch 0 plays the voice as
+    // recorded. Jitter and width come in over the first tenth of the knob, as the read
+    // head starts to slow and the grains begin to repeat.
+    const float onset = std::min (t * 10.0f, 1.0f);
     base.grainSeconds = lerp (0.09f, 0.24f);
-    base.jitterSeconds = 0.008f + (0.18f - 0.008f) * t * std::sqrt (t);
-    base.stereoWidth = lerp (0.25f, 0.6f);
+    base.jitterSeconds = 0.008f * onset + (0.18f - 0.008f) * t * std::sqrt (t);
+    base.stereoWidth = onset * lerp (0.25f, 0.6f);
+    base.timingJitter *= onset;
     return base;
 }
 

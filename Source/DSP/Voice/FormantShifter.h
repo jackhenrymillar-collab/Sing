@@ -70,6 +70,12 @@ private:
 
     static constexpr int windowSize = 1024;
     std::vector<float> window;
+
+    // A 20 Hz DC blocker on the output. Grains read at a ratio other than 1 are no longer
+    // a whole number of cycles under their window, so each one carries a little DC; laid
+    // one period apart they add up to a steady offset (a low thump when notes change).
+    float dcCoeff = 0.997f;
+    float dcInL = 0.0f, dcOutL = 0.0f, dcInR = 0.0f, dcOutR = 0.0f;
 };
 
 } // namespace sing

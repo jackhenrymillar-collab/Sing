@@ -1,6 +1,9 @@
 #include "VoiceAnalysis.h"
 
+#include "Common/RealFFT.h"
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <vector>
 
@@ -10,6 +13,9 @@ namespace sing
 namespace
 {
 // YIN on one frame. Returns the period in samples, or 0, and the dip depth as aperiodicity.
+// YIN steps 3 to 5 on a difference function d (d[tau] for tau 1 to maxLag + 1).
+float pickPeriod (const std::vector<float>& d, int minLag, int maxLag, float& aperiodicity);
+
 float yinPeriod (const float* x, int window, int minLag, int maxLag, float& aperiodicity)
 {
     std::vector<float> d ((size_t) maxLag + 2, 0.0f);
@@ -25,7 +31,11 @@ float yinPeriod (const float* x, int window, int minLag, int maxLag, float& aper
         }
         d[(size_t) tau] = (float) sum;
     }
+    return pickPeriod (d, minLag, maxLag, aperiodicity);
+}
 
+float pickPeriod (const std::vector<float>& d, int minLag, int maxLag, float& aperiodicity)
+{
     // Step 3: cumulative mean normalised difference.
     std::vector<float> cmnd (d.size(), 1.0f);
     double running = 0.0;
@@ -133,6 +143,101 @@ PitchEstimate detectPitch (const float* x, int numSamples, double sampleRate, fl
     result.hz = (float) (sampleRate / median);
     result.confidence = std::clamp (1.0f - meanAp, 0.0f, 1.0f);
     return result;
+}
+
+float PitchTrack::periodAt (double position) const noexcept
+{
+    if (periods.empty())
+        return 0.0f;
+    const long i = std::lround ((position - firstCentre) / hopSamples);
+    return periods[(size_t) std::clamp (i, 0L, (long) periods.size() - 1)];
+}
+
+PitchTrack trackPitch (const float* x, int numSamples, double sampleRate, float minHz, float maxHz, double hopSeconds)
+{
+    PitchTrack track;
+    if (x == nullptr || sampleRate <= 0.0 || minHz <= 0.0f || maxHz <= minHz)
+        return track;
+
+    const int minLag = std::max (2, (int) std::floor (sampleRate / maxHz));
+    const int maxLag = (int) std::ceil (sampleRate / minHz);
+    const int window = std::max (maxLag, (int) (0.025 * sampleRate));
+    const int span = window + maxLag + 2;
+    if (numSamples < span)
+        return track;
+
+    track.hopSamples = std::max (1.0, hopSeconds * sampleRate);
+    track.firstCentre = 0.5 * span;
+    const int frames = 1 + (int) ((numSamples - span) / track.hopSamples);
+
+    // The difference function through FFTs: d(tau) = E(a) + E(b shifted by tau) - 2 r(tau),
+    // where r is the cross-correlation of the window with the span after it.
+    int size = 4;
+    while (size < window + span)
+        size *= 2;
+    RealFFT fft (size);
+    std::vector<float> a ((size_t) size), b ((size_t) size), fa ((size_t) size + 2), fb ((size_t) size + 2), r ((size_t) size);
+    std::vector<double> energy ((size_t) numSamples + 1, 0.0);
+    for (int i = 0; i < numSamples; ++i)
+        energy[(size_t) i + 1] = energy[(size_t) i] + (double) x[i] * x[i];
+
+    double loudest = 0.0;
+    for (int f = 0; f < frames; ++f)
+    {
+        const int pos = (int) (f * track.hopSamples);
+        loudest = std::max (loudest, energy[(size_t) (pos + window)] - energy[(size_t) pos]);
+    }
+
+    std::vector<float> d ((size_t) maxLag + 2, 0.0f);
+    track.periods.assign ((size_t) frames, 0.0f);
+    for (int f = 0; f < frames; ++f)
+    {
+        const int pos = (int) (f * track.hopSamples);
+        const double ea = energy[(size_t) (pos + window)] - energy[(size_t) pos];
+        if (ea < loudest * 1.0e-3 || ea <= 0.0)   // more than 30 dB below the loudest frame
+            continue;
+
+        std::fill (a.begin(), a.end(), 0.0f);
+        std::fill (b.begin(), b.end(), 0.0f);
+        std::copy (x + pos, x + pos + window, a.begin());
+        std::copy (x + pos, x + pos + span, b.begin());
+        fft.forward (a.data(), fa.data());
+        fft.forward (b.data(), fb.data());
+        for (int k = 0; k <= size / 2; ++k)
+        {
+            // conj(A) * B
+            const float ar = fa[(size_t) (2 * k)], ai = -fa[(size_t) (2 * k + 1)];
+            const float br = fb[(size_t) (2 * k)], bi = fb[(size_t) (2 * k + 1)];
+            fa[(size_t) (2 * k)] = ar * br - ai * bi;
+            fa[(size_t) (2 * k + 1)] = ar * bi + ai * br;
+        }
+        fft.inverse (fa.data(), r.data());
+
+        for (int tau = 1; tau <= maxLag + 1; ++tau)
+        {
+            const double eb = energy[(size_t) (pos + tau + window)] - energy[(size_t) (pos + tau)];
+            d[(size_t) tau] = (float) std::max (0.0, ea + eb - 2.0 * (double) r[(size_t) tau]);
+        }
+
+        float ap = 1.0f;
+        const float period = pickPeriod (d, minLag, maxLag, ap);
+        if (ap < 0.2f && period > 0.0f)
+            track.periods[(size_t) f] = period;
+    }
+
+    // A median of five smooths over single-frame mistakes (octave jumps, a stray unvoiced
+    // frame inside a vowel).
+    std::vector<float> smoothed (track.periods.size());
+    for (int f = 0; f < frames; ++f)
+    {
+        std::array<float, 5> w {};
+        for (int j = -2; j <= 2; ++j)
+            w[(size_t) (j + 2)] = track.periods[(size_t) std::clamp (f + j, 0, frames - 1)];
+        std::sort (w.begin(), w.end());
+        smoothed[(size_t) f] = w[2];
+    }
+    track.periods = std::move (smoothed);
+    return track;
 }
 
 TrimRange findAudibleRange (const float* x, int numSamples, double sampleRate, float thresholdDb)

@@ -47,8 +47,9 @@ jitter, so the frozen cloud keeps breathing for as long as the key is held.
 
 Details that matter for vocal pads:
 
-- **In-phase grains.** When the voice's root pitch is known (`LoopSettings::pitchPeriod`),
-  each grain's jitter is rounded to whole pitch periods, so overlapping grains of a steady
+- **In-phase grains.** When the voice's pitch is known, each grain's jitter is rounded to
+  whole pitch periods of the note sounding where the grain reads (`LoopSource::periodAt`, from
+  the voice's pitch track, or `LoopSettings::pitchPeriod` when there is none), so overlapping grains of a steady
   vowel add up cleanly instead of beating against each other. In tests this cut the level
   wobble on a held pure tone from 4.7 dB to under 1 dB. Unpitched voices (breaths, whispers)
   skip it, and `Settings::phaseAlign` turns it off.
@@ -70,11 +71,13 @@ Details that matter for vocal pads:
 
 | Knob | Speed | Grain | Jitter |
 | --- | --- | --- | --- |
-| 0 | 1 (recorded speed) | 90 ms | 8 ms |
+| 0 | 1 (recorded speed) | 90 ms | 0 |
 | 0.5 | about 1/17 | 165 ms | 69 ms |
 | 0.97 and up | 0 (held breath) | 240 ms | 180 ms |
 
 Speed falls exponentially to 1/256 at 0.97 of the travel; the last 3 % is the held breath.
+At 0 the grains have no jitter, random pan or random timing, so Stretch 0 plays the voice
+exactly as recorded; those come in over the first tenth of the knob (8 ms of jitter by 0.1).
 These are starting values to tune by ear.
 
 ### Real-time safety and CPU

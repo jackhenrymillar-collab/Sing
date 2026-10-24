@@ -118,6 +118,7 @@ void SingProcessor::rebuildLoop()
     loop.fade = juce::roundToInt (value (ParamID::loopFade) * 0.01f * (float) loop.length * 0.5f);
     loop.direction = static_cast<LoopDirection> (juce::jlimit (0, 2, juce::roundToInt (value (ParamID::direction))));
     loop.pitchPeriod = v->isPitched() ? (float) (v->getSampleRate() / v->rootHz()) : 0.0f;
+    loop.pitchTrack = v->getPitchTrack();
 
     const auto& audio = v->getAudio();
     std::array<const float*, 2> channels { audio.getReadPointer (0), audio.getReadPointer (std::min (1, audio.getNumChannels() - 1)) };

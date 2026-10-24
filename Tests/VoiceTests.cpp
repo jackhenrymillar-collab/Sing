@@ -112,6 +112,29 @@ TEST_CASE ("Pitch detection calls breaths and noise unpitched")
     CHECK_FALSE (detectPitch (n.data(), 48000, sr).pitched());
 }
 
+TEST_CASE ("Pitch track follows a voice that moves between notes")
+{
+    // Half a second each of three notes, like a sung phrase.
+    std::vector<float> x;
+    for (double hz : { 494.0, 416.0, 440.0 })
+    {
+        for (int i = 0; i < 24000; ++i)
+        {
+            double s = 0.0;
+            for (int h = 1; h <= 6; ++h)
+                s += std::sin (twoPi * hz * h * i / sr) / h;
+            x.push_back ((float) (0.2 * s));
+        }
+    }
+    const auto track = trackPitch (x.data(), (int) x.size(), sr);
+    CHECK_THAT (sr / track.periodAt (12000.0), WithinAbs (494.0, 3.0));
+    CHECK_THAT (sr / track.periodAt (36000.0), WithinAbs (416.0, 3.0));
+    CHECK_THAT (sr / track.periodAt (60000.0), WithinAbs (440.0, 3.0));
+
+    const auto quiet = std::vector<float> (48000, 0.0f);
+    CHECK (trackPitch (quiet.data(), 48000, sr).periodAt (24000.0) == 0.0f);
+}
+
 TEST_CASE ("Silence trim finds the audible part")
 {
     std::vector<float> x (96000, 0.0f);
@@ -130,12 +153,46 @@ TEST_CASE ("Formant shifter at ratio 1 passes the voice through, delayed")
         const auto x = voice (48000);
         int d = 0;
         const auto y = shift (x, period, 1.0f, &d);
+
+        // The shifter's output has a 20 Hz DC blocker, so compare against the input through
+        // the same filter.
+        const float coeff = (float) std::exp (-2.0 * 3.14159265358979 * 20.0 / sr);
+        std::vector<float> expected (x.size());
+        float in1 = 0.0f, out1 = 0.0f;
+        for (size_t i = 0; i < x.size(); ++i)
+        {
+            out1 = x[i] - in1 + coeff * out1;
+            in1 = x[i];
+            expected[i] = out1;
+        }
+
         double maxErr = 0.0;
         for (int i = d + 10; i < 48000; ++i)
-            maxErr = std::max (maxErr, (double) std::abs (y[(size_t) i] - x[(size_t) (i - d)]));
+            maxErr = std::max (maxErr, (double) std::abs (y[(size_t) i] - expected[(size_t) (i - d)]));
         INFO ("period " << period << ", latency " << d << ", max error " << maxErr);
         CHECK (maxErr < 2.0e-3);
         CHECK (d < 0.03 * sr);
+    }
+}
+
+TEST_CASE ("Formant shifter adds no DC offset")
+{
+    // Grains read at a ratio other than 1 each carry a little DC, which used to add up to a
+    // steady offset and a low thump.
+    const auto x = sine (587.0, 96000);
+    for (float ratio : { 0.6f, 0.75f, 1.6f })
+    {
+        const auto y = shift (x, (float) (sr / 587.0), ratio);
+        double mean = 0.0, power = 0.0;
+        for (size_t i = 48000; i < y.size(); ++i)
+        {
+            mean += y[i];
+            power += (double) y[i] * y[i];
+        }
+        mean /= 48000.0;
+        const double level = std::sqrt (power / 48000.0);
+        INFO ("ratio " << ratio << ": DC " << db (std::abs (mean) / level) << " dB below the signal");
+        CHECK (std::abs (mean) < level * 1.0e-3);
     }
 }
 
@@ -151,7 +208,9 @@ TEST_CASE ("Formant shifter moves the vowel colour and keeps the pitch")
     const double bUp = brightness (up, from, n), bDown = brightness (down, from, n);
     INFO ("brightness: original " << base << ", up " << bUp << ", down " << bDown);
     CHECK (bUp > base * 1.5);
-    CHECK (bDown < base * 0.8);
+    // 0.85: before the DC blocker the shifter added a DC offset when moving formants down,
+    // which this measure counted as extra darkness.
+    CHECK (bDown < base * 0.85);
 
     CHECK_THAT (detectPitch (up.data() + from, n, sr).hz, WithinAbs (ooh.rootHz, 3.0));
     CHECK_THAT (detectPitch (down.data() + from, n, sr).hz, WithinAbs (ooh.rootHz, 3.0));
@@ -255,6 +314,39 @@ TEST_CASE ("Synth: a key plays the voice at that pitch")
     CHECK_THAT (detectPitch (m.data() + 9600, 38400, sr).hz, WithinAbs (440.0, 4.0));
     CHECK (rms (m.data() + 9600, 38400) > 0.05);
     CHECK (allFinite (r));
+}
+
+TEST_CASE ("Synth: Stretch 0 at the root plays the voice as recorded")
+{
+    // With Stretch, Spread and Formant at 0, the note at the root key is the loop itself:
+    // no grains of their own, no resonance. (The formant shifter's 20 Hz DC blocker is the
+    // only change.)
+    auto src = placeholderSource (PlaceholderVowel::ooh);
+    SingSynth synth;
+    synth.prepare (sr, 256);
+    synth.setSource (src.get());
+    auto settings = plainSynth (220.0f);
+    settings.voice.stretch = 0.0f;
+    synth.setSettings (settings);
+    synth.noteOn (57, 1.0f);   // A3, the root
+    const auto r = renderSynth (synth, 48000);
+
+    const float coeff = (float) std::exp (-2.0 * 3.14159265358979 * 20.0 / sr);
+    float in1 = 0.0f, out1 = 0.0f;
+    double err = 0.0, ref = 0.0;
+    for (int i = 0; i < 48000; ++i)
+    {
+        const float x = src->channel (0)[i % src->size()];
+        out1 = x - in1 + coeff * out1;
+        in1 = x;
+        if (i >= 4800)
+        {
+            err += std::pow ((double) r.left[(size_t) i] - out1, 2.0);
+            ref += (double) out1 * out1;
+        }
+    }
+    INFO ("difference " << db (std::sqrt (err / ref)) << " dB below the voice");
+    CHECK (std::sqrt (err / ref) < 0.01);   // 40 dB down
 }
 
 TEST_CASE ("Synth: Formant keeps the pitch of a played note")

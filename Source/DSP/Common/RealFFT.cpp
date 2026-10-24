@@ -1,0 +1,190 @@
+#include "RealFFT.h"
+
+#include <cassert>
+#include <cmath>
+
+namespace sing
+{
+
+namespace
+{
+constexpr double twoPi = 6.283185307179586476925;
+}
+
+void RealFFT::prepare (int size)
+{
+    assert (size >= 4 && (size & (size - 1)) == 0);
+    n = size;
+    m = size / 2;
+    stages = 0;
+    while ((1 << stages) < m)
+        ++stages;
+
+    twiddle.resize ((size_t) m);   // m/2 complex
+    for (int k = 0; k < m / 2; ++k)
+    {
+        twiddle[(size_t) (2 * k)] = (float) std::cos (twoPi * k / m);
+        twiddle[(size_t) (2 * k + 1)] = (float) -std::sin (twoPi * k / m);
+    }
+
+    split.resize ((size_t) (m + 2));   // m/2 + 1 complex
+    for (int k = 0; k <= m / 2; ++k)
+    {
+        split[(size_t) (2 * k)] = (float) std::cos (twoPi * k / n);
+        split[(size_t) (2 * k + 1)] = (float) -std::sin (twoPi * k / n);
+    }
+
+    reversed.resize ((size_t) m);
+    for (int i = 0; i < m; ++i)
+    {
+        int r = 0;
+        for (int b = 0; b < stages; ++b)
+            if (i & (1 << b))
+                r |= 1 << (stages - 1 - b);
+        reversed[(size_t) i] = r;
+    }
+
+    scratch.assign ((size_t) n, 0.0f);
+}
+
+void RealFFT::bitReverse (float* z) const noexcept
+{
+    for (int i = 0; i < m; ++i)
+    {
+        const int j = reversed[(size_t) i];
+        if (j > i)
+        {
+            std::swap (z[2 * i], z[2 * j]);
+            std::swap (z[2 * i + 1], z[2 * j + 1]);
+        }
+    }
+}
+
+void RealFFT::stage (float* z, int s, bool inverse) const noexcept
+{
+    // Stage s combines blocks of 2^s into blocks of 2^(s+1).
+    const int half = 1 << s;
+    const int step = m / (2 * half);   // twiddle stride
+    const float sign = inverse ? -1.0f : 1.0f;
+
+    for (int block = 0; block < m; block += 2 * half)
+    {
+        for (int j = 0; j < half; ++j)
+        {
+            const float wr = twiddle[(size_t) (2 * j * step)];
+            const float wi = sign * twiddle[(size_t) (2 * j * step + 1)];
+            float* a = z + 2 * (block + j);
+            float* b = z + 2 * (block + j + half);
+            const float tr = b[0] * wr - b[1] * wi;
+            const float ti = b[0] * wi + b[1] * wr;
+            b[0] = a[0] - tr;
+            b[1] = a[1] - ti;
+            a[0] += tr;
+            a[1] += ti;
+        }
+    }
+}
+
+void RealFFT::complexFFT (float* z, bool inverse) const noexcept
+{
+    bitReverse (z);
+    for (int s = 0; s < stages; ++s)
+        stage (z, s, inverse);
+}
+
+void RealFFT::forward (const float* input, float* spectrum) noexcept
+{
+    // Even samples as the real part, odd as the imaginary part.
+    float* z = scratch.data();
+    for (int i = 0; i < n; ++i)
+        z[i] = input[i];
+    complexFFT (z, false);
+
+    // Split: E[k] = (Z[k] + conj Z[m-k]) / 2, O[k] = (Z[k] - conj Z[m-k]) / 2i,
+    // X[k] = E[k] + W^k O[k] with W = exp(-2 pi i / n).
+    for (int k = 0; k <= m / 2; ++k)
+    {
+        const int mk = (m - k) % m;
+        const float zr = z[2 * (k % m)], zi = z[2 * (k % m) + 1];
+        const float cr = z[2 * mk], ci = -z[2 * mk + 1];
+
+        const float er = 0.5f * (zr + cr), ei = 0.5f * (zi + ci);
+        // (a + ib) / 2i = (b - ia) / 2
+        const float orr = 0.5f * (zi - ci), oi = -0.5f * (zr - cr);
+
+        const float wr = split[(size_t) (2 * k)], wi = split[(size_t) (2 * k + 1)];
+        const float tr = orr * wr - oi * wi, ti = orr * wi + oi * wr;
+
+        spectrum[2 * k] = er + tr;
+        spectrum[2 * k + 1] = ei + ti;
+
+        // The mirrored bin m - k: X[m-k] = conj(E[k]) - conj(W^k O[k]) ... from the same E and O.
+        if (k != 0 && k != m - k)
+        {
+            spectrum[2 * (m - k)] = er - tr;
+            spectrum[2 * (m - k) + 1] = -(ei - ti);
+        }
+    }
+
+    // Bins 0 and m (Nyquist) are real.
+    const float z0r = z[0], z0i = z[1];
+    spectrum[0] = z0r + z0i;
+    spectrum[1] = 0.0f;
+    spectrum[2 * m] = z0r - z0i;
+    spectrum[2 * m + 1] = 0.0f;
+}
+
+void RealFFT::inverseStep (int step, const float* spectrum, float* work) const noexcept
+{
+    if (step == 0)
+    {
+        // Back to Z: E[k] = (X[k] + conj X[m-k]) / 2, O[k] = (X[k] - conj X[m-k]) / (2 W^k),
+        // Z[k] = E[k] + i O[k].
+        for (int k = 0; k < m; ++k)
+        {
+            const float xr = spectrum[2 * k], xi = spectrum[2 * k + 1];
+            const float cr = spectrum[2 * (m - k)], ci = -spectrum[2 * (m - k) + 1];
+
+            const float er = 0.5f * (xr + cr), ei = 0.5f * (xi + ci);
+            const float dr = 0.5f * (xr - cr), di = 0.5f * (xi - ci);
+
+            // Divide by W^k: multiply by conj(W^k).
+            float wr, wi;
+            if (k <= m / 2)
+            {
+                wr = split[(size_t) (2 * k)];
+                wi = -split[(size_t) (2 * k + 1)];
+            }
+            else
+            {
+                // W^k for k > m/2: W^k = -conj(W^(m-k)), since W^m = -1.
+                wr = -split[(size_t) (2 * (m - k))];
+                wi = -split[(size_t) (2 * (m - k) + 1)];
+            }
+            const float orr = dr * wr - di * wi, oi = dr * wi + di * wr;
+
+            // Z = E + i O
+            work[2 * k] = er - oi;
+            work[2 * k + 1] = ei + orr;
+        }
+        bitReverse (work);
+        return;
+    }
+
+    stage (work, step - 1, true);
+
+    if (step == stages)
+    {
+        const float scale = 1.0f / (float) m;
+        for (int i = 0; i < n; ++i)
+            work[i] *= scale;
+    }
+}
+
+void RealFFT::inverse (const float* spectrum, float* output) noexcept
+{
+    for (int s = 0; s < inverseStepCount(); ++s)
+        inverseStep (s, spectrum, output);
+}
+
+} // namespace sing
