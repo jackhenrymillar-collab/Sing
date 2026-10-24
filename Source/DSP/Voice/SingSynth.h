@@ -65,6 +65,21 @@ public:
     // Sample positions in the voice of the sounding notes, newest first, for the waveform.
     int getPlayPositions (double* positions, float* levels, int maxCount) const noexcept;
 
+    // Every Spread copy of the newest maxNotes sounding notes, newest note first and its centre
+    // copy first. note counts the notes from 0 (newest); noteId tells notes apart across calls.
+    struct PlayLight
+    {
+        double position;   // sample position in the voice
+        float level;       // the note's envelope, 0 to 1
+        float weight;      // the copy's place in the Spread, 0 to 1
+        float pan;         // -1 to 1
+        float pitchRatio;
+        float zoneSamples; // width of voice being read, centred; 0 for the granular zone
+        int note, copy;
+        uint32_t noteId;
+    };
+    int getPlayLights (PlayLight* lights, int maxNotes, int maxCount) const noexcept;
+
     const SingVoice& getVoice (int index) const noexcept { return voices[(size_t) index]; }
 
 private:

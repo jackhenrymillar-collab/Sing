@@ -90,6 +90,13 @@ public:
     bool isUsing (const LoopSource& source) const noexcept;
     double playPosition() const noexcept;   // sample position in the voice, first copy
 
+    // Where each running Spread copy is reading, for the waveform's play lights. weight is the
+    // copy's place in the Spread (0 to 1, before the mix is normalised), pan is -1 to 1.
+    // zoneSamples is the width of voice the copy is reading, centred on position; 0 means the
+    // granular read zone, which the panel works out from the Stretch knob.
+    struct CopyLight { double position; float weight, pan, pitchRatio, zoneSamples; };
+    int getCopyLights (CopyLight* lights, int maxCount) const noexcept;   // centre copy first
+
     // How a copy sits in the Spread: its detune and pan, and its share of the level.
     struct CopyShape { float cents, pan, weight; };
     static CopyShape copyShape (int copy, float spread) noexcept;
