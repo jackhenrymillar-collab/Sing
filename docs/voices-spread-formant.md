@@ -14,6 +14,13 @@ Each preset carries its own voice (`VoiceData`). When a voice is loaded Sing:
    frames must be pitched, and the root is their median. Breath and whispers come out
    unpitched. The root can be set by hand from the voice menu.
 
+Sing also tracks the pitch over time (YIN every 20 ms, with a median of five frames against
+octave slips), because many voices move between notes. The root only decides which key plays
+the voice at its recorded pitch. Everything that works pitch by pitch (grains placed in phase,
+the formant shifter's grains) follows the note actually sounding where it reads. Using the root
+there instead lays a second, wrong set of harmonics over any part of the voice that sings a
+different note, which sounds like a resonance.
+
 The loop handles (Start, Length, Fade) are percentages of the trimmed recording, so a preset
 keeps its loop when the voice is trimmed differently. The fade is up to half the loop.
 
@@ -65,11 +72,16 @@ Each copy has its own grain engine.
 Formant changes the vowel size (throat size) without changing pitch. It uses TD-PSOLA
 (Moulines and Charpentier, 1990):
 
-- Grains are two pitch periods long, one period apart, Hann windowed.
+- Grains are two pitch periods long, one period apart, Hann windowed. The period is the one
+  the pitch track measured where the note is reading.
 - Each grain is read at the formant ratio and placed back at the original spacing, so the
   pitch stays and the spectral envelope moves.
 - Unpitched voices use 5 ms grains.
 - The shifter is primed at note start so its delay (about 1.5 periods) isn't heard.
+- Within 5 cents of no change it passes the sound straight through.
+- A 20 Hz DC blocker follows it. A grain read at a ratio other than 1 no longer holds a whole
+  number of cycles under its window, so it carries a little DC, and grains laid a period apart
+  add that up to an offset (heard as a low thump).
 
 **Formant 0 keeps the recorded vowel on every key.** Playing a sampler higher normally
 squeezes the formants too (the chipmunk effect). Sing undoes that: the shift ratio is

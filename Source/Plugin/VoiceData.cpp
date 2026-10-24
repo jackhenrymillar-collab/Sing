@@ -126,6 +126,7 @@ void VoiceData::analyse()
 
     const auto pitch = detectPitch (mono.data() + audibleStart, audibleEnd - audibleStart, sampleRate);
     detectedHz = pitch.hz;
+    pitchTrack = std::make_shared<PitchTrack> (trackPitch (mono.data(), n, sampleRate));
     computePeaks();
 }
 

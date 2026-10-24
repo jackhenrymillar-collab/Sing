@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Voice/PlaceholderVoices.h"
+#include "Voice/VoiceAnalysis.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_data_structures/juce_data_structures.h>
@@ -56,6 +57,9 @@ public:
     float rootHz() const noexcept;
     bool isPitched() const noexcept { return rootOverride.has_value() || detectedHz > 0.0f; }
     float getDetectedHz() const noexcept { return detectedHz; }
+
+    // The voice's pitch over time (for voices that move between notes).
+    std::shared_ptr<const PitchTrack> getPitchTrack() const noexcept { return pitchTrack; }
     std::optional<int> getRootOverride() const noexcept { return rootOverride; }
 
     // Peak levels across the trimmed voice, 0 to 1, for drawing.
@@ -76,6 +80,7 @@ private:
     std::optional<PlaceholderVowel> placeholder;
 
     float detectedHz = 0.0f;
+    std::shared_ptr<const PitchTrack> pitchTrack;
     std::optional<int> rootOverride;
     bool trimSilence = true;
     int audibleStart = 0, audibleEnd = 0;

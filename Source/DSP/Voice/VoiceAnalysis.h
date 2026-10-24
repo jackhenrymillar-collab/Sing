@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 namespace sing
 {
 
@@ -16,6 +18,22 @@ struct PitchEstimate
 // confident ones is returned. Breaths and whispers come back unpitched.
 PitchEstimate detectPitch (const float* samples, int numSamples, double sampleRate,
                            float minHz = 60.0f, float maxHz = 1000.0f);
+
+// The pitch of a voice over time: one YIN measurement every hop, for voices that move
+// between notes. Each entry is the pitch period in samples, or 0 where the voice is quiet,
+// breathy or has no clear pitch.
+struct PitchTrack
+{
+    double hopSamples = 1.0;
+    double firstCentre = 0.0;      // sample position the first entry measures
+    std::vector<float> periods;
+
+    // The period nearest a sample position in the voice (0 when unpitched there).
+    float periodAt (double position) const noexcept;
+};
+
+PitchTrack trackPitch (const float* samples, int numSamples, double sampleRate,
+                       float minHz = 60.0f, float maxHz = 1000.0f, double hopSeconds = 0.02);
 
 // The audible part of a voice: where it rises above, and last falls below, a level relative
 // to its loudest 10 ms (default -50 dB).

@@ -54,6 +54,9 @@ public:
 
     // Play buffer position of the read head, for tests and debugging.
     double headPosition() const noexcept { return head; }
+
+    // The voice's pitch period (voice samples) where the read head is; 0 when unpitched there.
+    float currentPeriod() const noexcept { return current != nullptr ? current->periodAt (head) : 0.0f; }
     int activeGrainCount() const noexcept;
 
     // Seeds the random generator, so renders and tests are repeatable.

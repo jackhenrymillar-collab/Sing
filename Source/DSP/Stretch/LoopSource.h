@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Voice/VoiceAnalysis.h"
+
 #include <array>
 #include <memory>
 #include <vector>
@@ -31,6 +33,11 @@ struct LoopSettings
     // Length of one cycle of the voice at its root pitch, in samples, from pitch detection.
     // 0 when the voice is unpitched (breaths, whispers).
     float pitchPeriod = 0.0f;
+
+    // The voice's pitch over time, when it has been measured. Voices that move between notes
+    // need it: pitch-synchronous processing must follow the note actually sounding, not the
+    // root. Without it, pitchPeriod is used everywhere.
+    std::shared_ptr<const PitchTrack> pitchTrack;
 };
 
 // Per-engine analysis attached to a LoopSource when it is built.
@@ -80,6 +87,13 @@ public:
 
     // Converts a sample position in the voice into a play buffer position.
     double fromVoicePosition (double voicePosition) const noexcept;
+
+    // The pitch period, in voice samples, at a play buffer position: from the pitch track
+    // when there is one, otherwise settings().pitchPeriod. 0 where the voice is unpitched.
+    float periodAt (double bufferPosition) const noexcept
+    {
+        return loop.pitchTrack != nullptr ? loop.pitchTrack->periodAt (toVoicePosition (bufferPosition)) : loop.pitchPeriod;
+    }
 
     const SourceAnalysis* analysis (StretchMode mode) const noexcept
     {
