@@ -597,10 +597,14 @@ void BloomVoice::renderFilling (float* left, float* right, int len) noexcept
 {
     // While a note starts, only some of the overlapping frames are real. Make up the
     // difference, by up to 12 dB, so the note starts near full level instead of swelling in.
-    // A harmonic's frame carries the analysis window as well as the synthesis one, so its
-    // shape is close to Hann cubed, whose sum at 4x overlap is 1.25.
+    // Random-phase frames (classic Bloom, and breath in every mode) are noise under the
+    // synthesis window, so they add in power: Hann squared sums to 1.5 at 4x overlap. A locked
+    // harmonic's frame carries the analysis window as well, so its shape is close to Hann
+    // cubed, and those add in amplitude: Hann cubed sums to 1.25.
     const int stride = maxSize / size;
     const float* w = synthesisWindow.data();
+    const auto* analysis = static_cast<const BloomAnalysis*> (source->analysis (StretchMode::bloom));
+    const bool coherent = analysis != nullptr && analysis->locksHarmonics();
     for (int i = 0; i < len; ++i)
     {
         float sum = 0.0f, l = 0.0f, r = 0.0f;
@@ -611,11 +615,11 @@ void BloomVoice::renderFilling (float* left, float* right, int len) noexcept
                 continue;
             const int at = j * hop + pos + i;
             const float x = w[(size_t) (at * stride)];
-            sum += x * x * x;
+            sum += coherent ? x * x * x : x * x;
             l += framesLeft[(size_t) f][(size_t) at];
             r += framesRight[(size_t) f][(size_t) at];
         }
-        const float gain = sum > 0.0f ? std::min (4.0f, 1.25f / sum) : 0.0f;
+        const float gain = sum <= 0.0f ? 0.0f : std::min (4.0f, coherent ? 1.25f / sum : std::sqrt (1.5f / sum));
         left[i] += l * gain;
         right[i] += r * gain;
     }
