@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "UI/BloomSky.h"
 #include "UI/BlueHourSky.h"
 #include "UI/Controls.h"
 #include "UI/Theme.h"
@@ -52,6 +53,8 @@ private:
     SingProcessor& processor;
     PresetManager& presets;
     ui::BlueHourSky sky;
+    ui::BloomSky bloomSky;
+    float bloomMix = 0.0f;   // 0 shows the blue hour, 1 the Bloom sky; eases between them
 
     // Header
     ui::ArrowButton previous { "Previous preset", true }, next { "Next preset", false };
@@ -72,11 +75,14 @@ private:
     ui::TextDragger loopStart { "Start" }, loopLength { "Length" }, loopFade { "Fade" };
 
     // Knobs
-    enum KnobId { attack, release, stretch, spread, formant, numKnobs };
+    enum KnobId { attack, release, stretch, spread, formant, air, space, numKnobs };
     std::array<ui::Knob, numKnobs> knobs;
 
     // Bottom row
     ui::PillToggle holdButton { "HOLD" };
+    std::array<std::unique_ptr<ui::PillToggle>, 2> engineButtons;
+    std::unique_ptr<juce::ParameterAttachment> engineAttachment;
+    bool bloomEngine = false;
     ui::TextDragger voicesDragger { "Voices", true }, glideDragger { "Glide", true }, outputDragger { "Output", true };
 
     ui::SaveOverlay saveOverlay;
@@ -94,7 +100,7 @@ private:
     int lastPresetChange = -1;
     juce::String lastPresetText;
     bool lastAB = false;
-    double lastPresetCheck = 0.0;
+    double lastPresetCheck = 0.0, lastFrameTime = -1.0;
     juce::String note;
     double noteUntil = 0.0;
     bool motion = true;

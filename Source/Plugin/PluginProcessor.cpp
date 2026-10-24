@@ -6,8 +6,9 @@ namespace sing
 
 namespace
 {
-    // Parameters that change the loop itself, which is rebuilt off the audio thread.
-    constexpr const char* kLoopIds[] = { ParamID::loopStart, ParamID::loopLength, ParamID::loopFade, ParamID::direction };
+    // Parameters that change the loop itself, which is rebuilt off the audio thread. The
+    // engine is one: Bloom needs its analysis built with the loop.
+    constexpr const char* kLoopIds[] = { ParamID::loopStart, ParamID::loopLength, ParamID::loopFade, ParamID::direction, ParamID::engine };
     constexpr int kRebuildHz = 30;
 }
 
@@ -27,6 +28,9 @@ SingProcessor::SingProcessor()
     glide   = state.getRawParameterValue (ParamID::glide);
     output  = state.getRawParameterValue (ParamID::output);
     bypass  = state.getRawParameterValue (ParamID::bypass);
+    engine  = state.getRawParameterValue (ParamID::engine);
+    airAmount   = state.getRawParameterValue (ParamID::air);
+    spaceAmount = state.getRawParameterValue (ParamID::space);
     bypassParam = state.getParameter (ParamID::bypass);
 
     for (auto* id : kLoopIds)
@@ -34,6 +38,7 @@ SingProcessor::SingProcessor()
 
     // A fresh instance starts on the first factory preset, so it sings straight away.
     presets.loadPreset (0);
+    builder.startThread();
     rebuildLoop();
     startTimerHz (kRebuildHz);
 }
@@ -41,6 +46,7 @@ SingProcessor::SingProcessor()
 SingProcessor::~SingProcessor()
 {
     stopTimer();
+    builder.stopThread (4000);
     for (auto* id : kLoopIds)
         state.removeParameterListener (id, this);
 }
@@ -93,7 +99,6 @@ void SingProcessor::timerCallback()
 {
     if (loopDirty.load())
         rebuildLoop();
-    exchange.collectGarbage();
 }
 
 void SingProcessor::rebuildLoop()
@@ -116,19 +121,62 @@ void SingProcessor::rebuildLoop()
     loop.direction = static_cast<LoopDirection> (juce::jlimit (0, 2, juce::roundToInt (value (ParamID::direction))));
     loop.pitchPeriod = v->isPitched() ? (float) (v->getSampleRate() / v->rootHz()) : 0.0f;
     loop.pitchTrack = v->getPitchTrack();
+    loop.analyseForBloom = juce::roundToInt (value (ParamID::engine)) == 1;
 
-    const auto& audio = v->getAudio();
-    std::array<const float*, 2> channels { audio.getReadPointer (0), audio.getReadPointer (std::min (1, audio.getNumChannels() - 1)) };
-    auto source = LoopSource::build (channels.data(), audio.getNumChannels(), audio.getNumSamples(), v->getSampleRate(), loop);
+    builder.request ({ v, loop, from, length });
+}
 
-    voiceTrimStart = from;
-    voiceTrimLength = length;
-    rootHz = v->rootHz();
-    rootPitched = v->isPitched();
+void SingProcessor::LoopBuilder::request (Request r)
+{
+    {
+        const juce::ScopedLock sl (lock);
+        pending = std::move (r);
+    }
+    wake.signal();
+}
 
-    // All slots busy means the audio thread is still finishing many old loops: try next tick.
-    if (source == nullptr || ! exchange.publish (std::move (source)))
-        loopDirty = true;
+void SingProcessor::LoopBuilder::run()
+{
+    while (! threadShouldExit())
+    {
+        wake.wait (100);
+        owner.exchange.collectGarbage();
+
+        std::optional<Request> job;
+        {
+            const juce::ScopedLock sl (lock);
+            job.swap (pending);
+        }
+        if (! job || job->voice == nullptr)
+            continue;
+
+        const auto& v = *job->voice;
+        const auto& audio = v.getAudio();
+        std::array<const float*, 2> channels { audio.getReadPointer (0), audio.getReadPointer (std::min (1, audio.getNumChannels() - 1)) };
+        auto source = LoopSource::build (channels.data(), audio.getNumChannels(), audio.getNumSamples(), v.getSampleRate(), job->loop);
+
+        // A newer request came in while building: build that one instead.
+        {
+            const juce::ScopedLock sl (lock);
+            if (pending)
+                continue;
+        }
+
+        // All slots busy means the audio thread is still finishing many old loops: try
+        // again shortly, unless something newer turns up first.
+        if (source == nullptr || ! owner.exchange.publish (std::move (source)))
+        {
+            const juce::ScopedLock sl (lock);
+            if (! pending)
+                pending = std::move (job);
+            continue;
+        }
+
+        owner.voiceTrimStart = job->trimStart;
+        owner.voiceTrimLength = job->trimLength;
+        owner.rootHz = v.rootHz();
+        owner.rootPitched = v.isPitched();
+    }
 }
 
 //==============================================================================
@@ -141,6 +189,13 @@ bool SingProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 void SingProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     synth.prepare (sampleRate, juce::jmax (1, samplesPerBlock));
+    air.prepare (sampleRate);
+    air.setAmount (airAmount->load() * 0.01f);
+    air.reset();
+    space.prepare (sampleRate, juce::jmax (512, samplesPerBlock));
+    space.setAmount (spaceAmount->load() * 0.01f);
+    space.reset();
+    monoRight.assign ((size_t) juce::jmax (512, samplesPerBlock), 0.0f);
     outputGain.reset (sampleRate, 0.02);
     outputGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (output->load(), -36.0f));
     bypassStep = static_cast<float> (1.0 / (0.02 * sampleRate));
@@ -156,7 +211,11 @@ void SingProcessor::reset()
 
 double SingProcessor::getTailLengthSeconds() const
 {
-    return release != nullptr ? static_cast<double> (release->load()) : 0.0;
+    if (release == nullptr)
+        return 0.0;
+    const float amount = spaceAmount->load() * 0.01f;
+    const double reverb = amount > 0.0f ? 1.2 * Space::mapping (amount).decaySeconds : 0.0;
+    return static_cast<double> (release->load()) + reverb;
 }
 
 SynthSettings SingProcessor::readSettings() const noexcept
@@ -172,6 +231,7 @@ SynthSettings SingProcessor::readSettings() const noexcept
     s.voice.rootHz = rootHz.load();
     s.voice.pitched = rootPitched.load();
     s.polyphony = juce::roundToInt (voices->load());
+    s.voice.mode = juce::roundToInt (engine->load()) == 1 ? StretchMode::bloom : StretchMode::granular;
     return s;
 }
 
@@ -203,7 +263,11 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         return;
 
     if (panicPending.exchange (false))
+    {
         synth.allSoundOff();
+        space.reset();
+        air.reset();
+    }
 
     // Pick up a rebuilt loop, and hand back any old one no note uses any more.
     synth.setSource (exchange.acquire());
@@ -244,6 +308,28 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         handleMidi (meta.getMessage());
     }
     renderTo (rendered, numSamples);
+
+    // Air, then Space: the reverb hears the lifted top and the breath.
+    air.setAmount (airAmount->load() * 0.01f);
+    space.setAmount (spaceAmount->load() * 0.01f);
+    if (right != nullptr)
+    {
+        air.process (left, right, numSamples);
+        space.process (left, right, numSamples);
+    }
+    else
+    {
+        for (int pos = 0; pos < numSamples;)
+        {
+            const int n = std::min (numSamples - pos, (int) monoRight.size());
+            std::copy (left + pos, left + pos + n, monoRight.begin());
+            air.process (left + pos, monoRight.data(), n);
+            space.process (left + pos, monoRight.data(), n);
+            for (int i = 0; i < n; ++i)
+                left[pos + i] = 0.5f * (left[pos + i] + monoRight[(size_t) i]);
+            pos += n;
+        }
+    }
 
     // Output level, and the evening star's bypass, which fades Sing to silence.
     outputGain.setTargetValue (juce::Decibels::decibelsToGain (output->load(), -36.0f));

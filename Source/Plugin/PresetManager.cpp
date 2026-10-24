@@ -16,16 +16,20 @@ namespace
         float attack, release, stretch, spread, formant;
         float loopStart, loopLength, loopFade;
         int direction;
+        int engine;   // 0 Grain, 1 Bloom
+        float air, space;
     };
 
-    // The four presets from the mockup. Their voices are generated stand-ins until the
-    // recorded factory voices exist.
+    // The four presets from the mockup, and two for Bloom. Their voices are generated
+    // stand-ins until the recorded factory voices exist.
     constexpr FactoryPreset kFactory[] = {
-        //  name            voice                      attack release stretch spread formant  start length fade  direction
-        { "Hollow Choir", PlaceholderVowel::ooh,     2.4f,  7.5f,  68.0f, 35.0f, -2.0f,   30.0f, 40.0f, 28.0f, 0 },
-        { "Distant Ah",   PlaceholderVowel::ah,      3.8f,  9.0f,  82.0f, 50.0f, -4.0f,   22.0f, 36.0f, 35.0f, 0 },
-        { "Glass Hum",    PlaceholderVowel::hum,     1.2f,  6.0f,  45.0f, 28.0f,  2.0f,   40.0f, 46.0f, 20.0f, 0 },
-        { "Last Light",   PlaceholderVowel::breath,  5.0f, 12.0f,  90.0f, 62.0f,  0.0f,   18.0f, 34.0f, 40.0f, 2 },
+        //  name            voice                      attack release stretch spread formant  start length fade  dir engine air    space
+        { "Hollow Choir", PlaceholderVowel::ooh,     2.4f,  7.5f,  68.0f, 35.0f, -2.0f,   30.0f, 40.0f, 28.0f, 0,  0,     20.0f, 35.0f },
+        { "Distant Ah",   PlaceholderVowel::ah,      3.8f,  9.0f,  82.0f, 50.0f, -4.0f,   22.0f, 36.0f, 35.0f, 0,  0,     15.0f, 55.0f },
+        { "Glass Hum",    PlaceholderVowel::hum,     1.2f,  6.0f,  45.0f, 28.0f,  2.0f,   40.0f, 46.0f, 20.0f, 0,  0,     35.0f, 25.0f },
+        { "Last Light",   PlaceholderVowel::breath,  5.0f, 12.0f,  90.0f, 62.0f,  0.0f,   18.0f, 34.0f, 40.0f, 2,  0,     10.0f, 65.0f },
+        { "Bloom Halo",   PlaceholderVowel::ooh,     3.0f, 10.0f,  85.0f, 45.0f,  0.0f,   30.0f, 40.0f, 28.0f, 0,  1,     30.0f, 70.0f },
+        { "Slow Petals",  PlaceholderVowel::ah,      4.5f, 14.0f,  96.0f, 70.0f, -3.0f,   22.0f, 36.0f, 35.0f, 0,  1,     20.0f, 85.0f },
     };
 }
 
@@ -53,7 +57,10 @@ PresetManager::PresetManager (juce::AudioProcessorValueTreeState& s,
                      { ParamID::loopStart,  f.loopStart },
                      { ParamID::loopLength, f.loopLength },
                      { ParamID::loopFade,   f.loopFade },
-                     { ParamID::direction,  static_cast<float> (f.direction) } };
+                     { ParamID::direction,  static_cast<float> (f.direction) },
+                     { ParamID::engine,     static_cast<float> (f.engine) },
+                     { ParamID::air,        f.air },
+                     { ParamID::space,      f.space } };
         factory.push_back (std::move (p));
     }
 

@@ -69,6 +69,9 @@ int main (int argc, char* argv[])
         }
     };
 
+    // Loops are built on a background thread: give the first one a moment.
+    juce::Thread::sleep (400);
+
     std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
     auto* singEditor = dynamic_cast<sing::SingEditor*> (editor.get());
 

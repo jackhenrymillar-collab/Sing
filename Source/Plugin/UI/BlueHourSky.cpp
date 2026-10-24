@@ -116,6 +116,11 @@ void BlueHourSky::draw (juce::Graphics& g)
         wisp ({ -40.0f + 560.0f + drift, 92.0f, 360.0f, 22.0f }, juce::Colour (0xffe6bedc).withAlpha (0.18f));
     }
 
+    drawEveningStar (g, t, motion, bypassed);
+}
+
+void BlueHourSky::drawEveningStar (juce::Graphics& g, double t, bool motion, bool bypassed)
+{
     // The evening star: a soft halo and the four-pointed star, gently pulsing over 6 s.
     {
         const auto c = starCentre();

@@ -28,6 +28,9 @@ public:
     // The four-pointed star shape, centred on 0,0 with the given radius.
     static juce::Path starShape (float radius);
 
+    // Draws the evening star (also used by the Bloom sky). t is the animation time.
+    static void drawEveningStar (juce::Graphics&, double t, bool motion, bool bypassed);
+
 private:
     void rebuildBackground (float pixelScale);
 

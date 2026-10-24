@@ -22,10 +22,16 @@ namespace ParamID
     inline constexpr auto loopLength = "looplength";
     inline constexpr auto loopFade   = "loopfade";
     inline constexpr auto direction  = "direction";
+    inline constexpr auto engine     = "engine";
+    inline constexpr auto air        = "air";
+    inline constexpr auto space      = "space";
 }
 
 // The order matches LoopDirection.
 juce::StringArray directionNames();
+
+// The Stretch engines, in parameter order: Grain (granular) and Bloom (spectral smear).
+juce::StringArray engineNames();
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
