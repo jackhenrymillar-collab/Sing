@@ -534,6 +534,11 @@ TEST_CASE ("Bloom: the Window setting sets the analysis length")
     CHECK (sizes[0] == 4096);
     CHECK (sizes[1] == 32768);
     CHECK (sizes[2] == 65536);
+
+    // A long window on a short loop is held to half the loop, so the frames still differ and
+    // Stretch still has something to move through.
+    CHECK (BloomAnalysis::chooseSize (72000, sr, 1.4) == 32768);
+    CHECK (BloomAnalysis::chooseSize (24000, sr, 1.4) == 8192);
 }
 
 TEST_CASE ("Bloom: swapping to a loop with fewer analysis frames mid-note stays clean")
@@ -680,4 +685,26 @@ TEST_CASE ("Bloom: Filter keeps its band, or cuts it out with Low above High")
     CHECK (kept > 0.98);
     CHECK (cut < 0.01);
     CHECK (level (Stereo { pass, pass }, 48000, 4 * 48000) > -60.0);
+}
+
+TEST_CASE ("Bloom (classic): a note starts at its held level, with no burst while the frames fill in")
+{
+    // Noise is analysed without locked harmonics, so its frames take random phases and add
+    // up in power. The make-up while the first frames overlap has to match that.
+    auto src = noiseSource();
+    BloomVoice::Parameters p;
+    p.hold = true;
+    const auto x = playBloomWith (src, p);
+
+    int onset = 0;
+    while (onset < (int) x.size() && std::abs (x[(size_t) onset]) < 1.0e-4f)
+        ++onset;
+    REQUIRE (onset < 9600);
+
+    const double held = db (rms (x.data() + 3 * 48000, 2 * 48000));
+    double loudest = -100.0;
+    for (int b = onset; b + 2400 <= onset + 48000; b += 2400)
+        loudest = std::max (loudest, db (rms (x.data() + b, 2400)) - held);
+    std::printf ("  Bloom classic start: loudest 50 ms slice in the first second %+.1f dB against the held level\n", loudest);
+    CHECK (loudest < 2.0);
 }

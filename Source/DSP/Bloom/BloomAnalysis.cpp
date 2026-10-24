@@ -63,9 +63,10 @@ int BloomAnalysis::chooseSize (int bufferSize, double sampleRate, double windowS
     int size = minSize;
     while ((double) size * 1.414 < target)
         size *= 2;
-    // ...but no longer than the loop, or the window holds the loop more than once and it
-    // buzzes at the loop rate.
-    while (size > minSize && size > bufferSize)
+    // ...but no longer than half the loop. A window that holds the whole loop sees nearly
+    // the same sound wherever it sits, so every frame is alike and Stretch, which moves
+    // through the frames, has nothing left to move through.
+    while (size > minSize && 2 * size > bufferSize)
         size /= 2;
     return size;
 }
