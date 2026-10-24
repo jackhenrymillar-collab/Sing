@@ -103,6 +103,7 @@ void SingVoice::prepare (double sampleRate, int maxBlockSize)
         c.right.assign ((size_t) subBlock, 0.0f);
         c.running = false;
     }
+    bloom.prepare (hostRate);
     envelopeGains.assign ((size_t) subBlock, 0.0f);
     mixLeft.assign ((size_t) subBlock, 0.0f);
     mixRight.assign ((size_t) subBlock, 0.0f);
@@ -161,6 +162,13 @@ void SingVoice::start (const LoopSource& src, int midiNote, float velocity, cons
     killed = false;
     released = false;
     envelope.start (settings.attackSeconds);
+
+    bloomNote = settings.mode == StretchMode::bloom && BloomVoice::canPlay (src);
+    if (bloomNote)
+    {
+        bloom.start (src, 0.0, seedBase * 2654435761u, (float) (seedBase % 97u) / 97.0f);
+        return;
+    }
 
     for (int i = 0; i < maxCopies; ++i)
         if (copyShape (i, settings.spread).weight > 0.0f)
@@ -225,6 +233,8 @@ void SingVoice::stop() noexcept
         c.running = false;
         c.gain = 0.0f;
     }
+    bloom.stop();
+    bloomNote = false;
     source = nullptr;
 }
 
@@ -232,6 +242,13 @@ void SingVoice::setSource (const LoopSource& src) noexcept
 {
     if (! active)
         return;
+    if (bloomNote)
+    {
+        // A Bloom note keeps its old loop if the new one has no Bloom analysis (the engine
+        // was switched while it played); isUsing keeps that loop alive until the note ends.
+        bloom.setSource (src);
+        return;
+    }
     source = &src;
     for (auto& c : copies)
         if (c.running)
@@ -242,6 +259,8 @@ bool SingVoice::isUsing (const LoopSource& src) const noexcept
 {
     if (! active)
         return false;
+    if (bloomNote)
+        return bloom.isUsing (src);
     for (const auto& c : copies)
         if (c.running && c.engine.isUsing (src))
             return true;
@@ -250,6 +269,8 @@ bool SingVoice::isUsing (const LoopSource& src) const noexcept
 
 double SingVoice::playPosition() const noexcept
 {
+    if (bloomNote)
+        return bloom.playPosition();
     return copies[0].running ? copies[0].engine.playPosition() : 0.0;
 }
 
@@ -259,6 +280,19 @@ int SingVoice::getCopyLights (CopyLight* lights, int maxCount) const noexcept
         return 0;
 
     int n = 0;
+    if (bloomNote)
+    {
+        // Bloom's copies read the same window, each a little further on.
+        const auto zone = (float) bloom.windowSamples();
+        for (int i = 0; i < maxCopies && n < maxCount; ++i)
+        {
+            const auto shape = copyShape (i, voiceSettings.spread);
+            if (shape.weight > 0.0f)
+                lights[n++] = { bloom.playPosition ((double) i * copyOffsetSeconds), shape.weight, shape.pan, pitchRatio (i), zone };
+        }
+        return n;
+    }
+
     for (int i = 0; i < maxCopies && n < maxCount; ++i)
     {
         const auto& c = copies[(size_t) i];
@@ -314,6 +348,13 @@ void SingVoice::renderSubBlock (float* left, float* right, int n) noexcept
     std::fill_n (mixLeft.data(), n, 0.0f);
     std::fill_n (mixRight.data(), n, 0.0f);
 
+    if (bloomNote)
+    {
+        renderBloom (n, shapes, norm);
+        applyEnvelope (left, right, n);
+        return;
+    }
+
     const auto granular = StretchKnob::toGranularSettings (voiceSettings.stretch);
     const float speed = StretchKnob::toSpeed (voiceSettings.stretch);
     const float formantRatio = formantRatioNow();
@@ -364,6 +405,11 @@ void SingVoice::renderSubBlock (float* left, float* right, int n) noexcept
         }
     }
 
+    applyEnvelope (left, right, n);
+}
+
+void SingVoice::applyEnvelope (float* left, float* right, int n) noexcept
+{
     envelope.render (envelopeGains.data(), n);
     for (int s = 0; s < n; ++s)
     {
@@ -374,6 +420,33 @@ void SingVoice::renderSubBlock (float* left, float* right, int n) noexcept
 
     if (envelope.isIdle())
         stop();
+}
+
+void SingVoice::renderBloom (int n, const std::array<CopyShape, (size_t) maxCopies>& shapes, float norm) noexcept
+{
+    constexpr float halfPi = 1.57079632679f;
+    BloomVoice::Parameters p;
+    p.speed = StretchKnob::toSpeed (voiceSettings.stretch);
+    p.hold = voiceSettings.hold;
+    // Bloom moves the envelope separately from the pitch, so Formant 0 needs no
+    // compensation to keep the recorded vowel on every key.
+    p.formantRatio = std::exp2 (voiceSettings.formantSemitones / 12.0f);
+    p.width = 0.45f + 0.55f * voiceSettings.spread;
+    p.numLayers = 0;
+    for (int i = 0; i < maxCopies; ++i)
+    {
+        const auto& shape = shapes[(size_t) i];
+        if (shape.weight <= 0.0f)
+            continue;
+        const float theta = (shape.pan + 1.0f) * 0.5f * halfPi;
+        auto& layer = p.layers[(size_t) p.numLayers++];
+        layer.pitchRatio = pitchRatio (i);
+        layer.gainLeft = shape.weight * norm * std::cos (theta) * 1.41421356f;
+        layer.gainRight = shape.weight * norm * std::sin (theta) * 1.41421356f;
+        layer.offsetSeconds = (double) i * copyOffsetSeconds;
+    }
+    bloom.setParameters (p);
+    bloom.render (mixLeft.data(), mixRight.data(), n);
 }
 
 } // namespace sing

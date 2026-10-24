@@ -17,6 +17,12 @@ namespace sing
 class RealFFT
 {
 public:
+    // A process-wide RealFFT of each size, shared read-only by every voice (the inverse steps
+    // are const). makeShared() allocates and is for prepare(); shared() is real-time safe
+    // and returns nullptr for a size nobody has made yet.
+    static void makeShared (int size);
+    static const RealFFT* shared (int size) noexcept;
+
     RealFFT() = default;
     explicit RealFFT (int size) { prepare (size); }
 

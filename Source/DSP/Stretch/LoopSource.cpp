@@ -114,7 +114,8 @@ std::shared_ptr<const LoopSource> LoopSource::build (const float* const* input,
     }
 
     for (int m = 0; m < (int) StretchMode::count; ++m)
-        source->analyses[(size_t) m] = analyseSource ((StretchMode) m, *source);
+        if ((StretchMode) m != StretchMode::bloom || settings.analyseForBloom)
+            source->analyses[(size_t) m] = analyseSource ((StretchMode) m, *source);
 
     return source;
 }
