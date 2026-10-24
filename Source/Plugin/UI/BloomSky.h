@@ -8,9 +8,9 @@ namespace sing::ui
 {
 
 // The panel's background while Bloom is the engine: the blue hour deepened into a dreamy,
-// psychedelic night. Violet overhead melts through magenta to a coral and gold glow, slow
+// psychedelic night: near-black overhead deepening to plum at the bottom. Slow
 // aurora haze drifts and changes colour, a huge faint flower turns behind the knobs, and
-// colourful lights float up from the bottom, opening like blossoms as they rise and fading
+// colourful fireflies float up from the bottom, pulsing softly as they wander, and fade
 // out high in the sky. Playing makes the lights glow brighter.
 //
 // Drawn at 1040 x 620 panel units. With motion off (Reduce Motion) it is one still picture.
@@ -38,7 +38,6 @@ private:
     struct Light
     {
         float column, sway, swayRate, phase, radius, offset, period, hue;
-        bool petals;
     };
     std::vector<Star> stars;
     std::vector<Light> lights;

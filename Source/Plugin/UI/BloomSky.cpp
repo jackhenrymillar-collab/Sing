@@ -10,7 +10,7 @@ namespace
 {
     constexpr float kWidth = 1040.0f, kHeight = 620.0f;
     constexpr double twoPi = 6.28318530717958647692;
-    constexpr int kLights = 58;
+    constexpr int kLights = 84;
 
     // The time the still picture shows when motion is off: lights spread up the sky.
     constexpr double kStillTime = 37.0;
@@ -90,11 +90,10 @@ BloomSky::BloomSky()
         l.sway = 10.0f + 26.0f * rnd();
         l.swayRate = 0.04f + 0.08f * rnd();
         l.phase = rnd();
-        l.radius = 12.0f + 32.0f * rnd() * rnd();   // mostly small, a few large
+        l.radius = 3.2f + 3.0f * rnd();   // the bright dot's size; the glow is a few times wider
         l.period = 16.0f + 18.0f * rnd();           // seconds to rise from the bottom to the top
         l.offset = rnd() * l.period;
         l.hue = rnd();
-        l.petals = rnd() > 0.62f;
         lights.push_back (l);
     }
 }
@@ -167,7 +166,10 @@ void BloomSky::drawFlower (juce::Graphics& g, double t) const
 
 void BloomSky::drawLights (juce::Graphics& g, double t) const
 {
-    const float brightness = (0.75f + 0.55f * activity) * (bypassed ? 0.35f : 1.0f);
+    // Fireflies: small glowing dots drifting up from the bottom on wandering paths, each
+    // pulsing in its own slow rhythm. Each has a heart of one colour and a faint halo of
+    // the opposite colour.
+    const float brightness = (0.75f + 0.5f * activity) * (bypassed ? 0.35f : 1.0f);
     for (int i = 0; i < static_cast<int> (lights.size()); ++i)
     {
         const auto& l = lights[static_cast<size_t> (i)];
@@ -175,45 +177,28 @@ void BloomSky::drawLights (juce::Graphics& g, double t) const
         const int round = static_cast<int> (std::floor (cycle));
         const float u = static_cast<float> (cycle - round);   // 0 at the bottom, 1 at the top
 
-        // Each time round the light starts from a new place along the bottom.
+        // Each time round the firefly starts from a new place along the bottom, and wanders
+        // side to side on two slow waves as it rises.
         const float column = std::fmod (l.column + hash01 (i, round), 1.0f);
-        const float x = -20.0f + 1080.0f * column + l.sway * std::sin (static_cast<float> (twoPi * (l.swayRate * t + l.phase)));
-        const float y = kHeight + 40.0f - u * (kHeight - 40.0f);
+        const auto wander = static_cast<float> (twoPi * (l.swayRate * t + l.phase));
+        const float x = -20.0f + 1080.0f * column + l.sway * std::sin (wander) + 0.5f * l.sway * std::sin (2.3f * wander + 1.0f);
+        const float y = kHeight + 20.0f - u * (kHeight - 60.0f) + 8.0f * std::sin (1.7f * wander);
 
-        // It opens as it rises, like a blossom, then fades high in the sky.
-        const float bloom = std::pow (std::sin (juce::MathConstants<float>::pi * std::min (1.0f, u * 1.4f)), 0.6f);
-        const float fade = u < 0.08f ? u / 0.08f : std::pow (1.0f - u, 0.8f);
-        const float radius = l.radius * (0.45f + 0.75f * bloom);
-        const float alpha = 0.62f * fade * brightness;
-        if (alpha < 0.005f)
+        // Fade in at the bottom and out high in the sky, and pulse like a firefly: mostly a
+        // soft glow, flaring brighter now and then.
+        const float fade = u < 0.08f ? u / 0.08f : std::pow (1.0f - u, 0.7f);
+        const float pulse = std::pow (breathe (t, 2.5 + 3.0 * l.phase, l.hue), 3.0f);
+        const float alpha = (0.35f + 0.65f * pulse) * fade * brightness;
+        if (alpha < 0.01f)
             continue;
 
         const auto pair = lightPair (l.hue, t);
-        const auto colour = pair.heart;
         const juce::Point<float> c (x, y);
-        glow (g, c, radius * 2.4f, pair.halo, alpha * 0.6f);
-
-        if (l.petals && bloom > 0.3f)
-        {
-            // Six soft petals round the bigger lights, slowly turning.
-            const float spin = static_cast<float> (twoPi * (t / 30.0 + l.phase));
-            const float r = radius * 1.1f * bloom;
-            for (int p = 0; p < 6; ++p)
-            {
-                const float a = spin + static_cast<float> (twoPi) * static_cast<float> (p) / 6.0f;
-                const auto pc = c.translated (r * std::cos (a), r * std::sin (a));
-                g.saveState();
-                g.addTransform (juce::AffineTransform::rotation (a + juce::MathConstants<float>::halfPi, pc.x, pc.y));
-                g.addTransform (juce::AffineTransform::scale (0.55f, 1.0f, pc.x, pc.y));
-                glow (g, pc, r * 0.75f, (p % 2 == 0 ? pair.heart : pair.halo), alpha * 0.55f);
-                g.restoreState();
-            }
-        }
-
-        glow (g, c, radius, colour.brighter (0.25f), alpha);
-        // A small bright heart, tinted with the light's colour rather than white.
-        g.setColour (colour.brighter (0.9f).withAlpha (std::min (1.0f, alpha * 1.4f)));
-        g.fillEllipse (juce::Rectangle<float> (radius * 0.24f, radius * 0.24f).withCentre (c));
+        const float r = l.radius * (0.85f + 0.3f * pulse);
+        glow (g, c, r * 5.0f, pair.halo, 0.3f * alpha);
+        glow (g, c, r * 2.2f, pair.heart, 0.8f * alpha);
+        g.setColour (pair.heart.brighter (0.8f).withAlpha (std::min (1.0f, alpha)));
+        g.fillEllipse (juce::Rectangle<float> (r, r).withCentre (c));
     }
 }
 
