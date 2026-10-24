@@ -122,6 +122,10 @@ void BloomVoice::start (const LoopSource& src, double bufferPosition, uint32_t s
     units = spectrumUnits + 2 * fft->inverseStepCount() + 1;
 
     readPosition = std::fmod (std::max (0.0, bufferPosition), (double) src.size());
+    // The play light shows the note's start while its first frame is built, not wherever
+    // this voice's last note had got to.
+    currentFramePosition = buildFramePosition = readPosition;
+    currentFrameAdvance = buildFrameAdvance = 0.0;
     for (int i = 0; i <= overlap; ++i)
     {
         std::fill_n (framesLeft[(size_t) i].data(), size, 0.0f);
