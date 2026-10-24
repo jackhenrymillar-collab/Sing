@@ -535,10 +535,10 @@ TEST_CASE ("Bloom: the Window setting sets the analysis length")
     CHECK (sizes[1] == 32768);
     CHECK (sizes[2] == 65536);
 
-    // A long window on a short loop is held to half the loop, so the frames still differ and
-    // Stretch still has something to move through.
-    CHECK (BloomAnalysis::chooseSize (72000, sr, 1.4) == 32768);
-    CHECK (BloomAnalysis::chooseSize (24000, sr, 1.4) == 8192);
+    // A long window on a short loop is held to 98% of the loop.
+    CHECK (BloomAnalysis::chooseSize (72000, sr, 1.4) == 65536);
+    CHECK (BloomAnalysis::chooseSize (66000, sr, 1.4) == 32768);
+    CHECK (BloomAnalysis::chooseSize (24000, sr, 1.4) == 16384);
 }
 
 TEST_CASE ("Bloom: swapping to a loop with fewer analysis frames mid-note stays clean")
@@ -707,4 +707,33 @@ TEST_CASE ("Bloom (classic): a note starts at its held level, with no burst whil
         loudest = std::max (loudest, db (rms (x.data() + b, 2400)) - held);
     std::printf ("  Bloom classic start: loudest 50 ms slice in the first second %+.1f dB against the held level\n", loudest);
     CHECK (loudest < 2.0);
+}
+
+TEST_CASE ("Bloom: a new note's play light starts at the note's start, not where the voice's last note was")
+{
+    auto src = noiseSource();
+    BloomVoice voice;
+    voice.prepare (sr);
+    BloomVoice::Parameters p;
+    p.speed = 0.5f;
+    p.numLayers = 1;
+    p.layers[0].gainLeft = p.layers[0].gainRight = 0.5f;
+    voice.setParameters (p);
+    std::vector<float> l (256), r (256);
+
+    voice.start (*src, 0.0, 11u, 0.0f);
+    for (int b = 0; b < 400; ++b)
+        voice.render (l.data(), r.data(), 256);
+    const double startPosition = src->toVoicePosition (0.0);
+    REQUIRE (voice.playPosition() - startPosition > 0.5 * sr);   // the first note has moved on
+
+    // The second note on the same voice: every block until it has moved on stays near its start.
+    voice.start (*src, 0.0, 12u, 0.0f);
+    double furthest = 0.0;
+    for (int b = 0; b < 40; ++b)
+    {
+        voice.render (l.data(), r.data(), 256);
+        furthest = std::max (furthest, std::abs (voice.playPosition() - startPosition));
+    }
+    CHECK (furthest < 0.2 * sr);
 }
