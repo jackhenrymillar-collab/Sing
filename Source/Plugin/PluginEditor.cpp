@@ -191,8 +191,8 @@ SingPanel::SingPanel (SingProcessor& p)
     loopFade.setTooltip ("Crossfades the loop's ends into each other. Long fades blur the loop into a steady tone");
 
     // Knobs
-    const char* ids[numKnobs] = { ParamID::attack, ParamID::release, ParamID::stretch, ParamID::spread, ParamID::formant };
-    const char* labels[numKnobs] = { "Attack", "Release", "Stretch", "Spread", "Formant" };
+    const char* ids[numKnobs] = { ParamID::attack, ParamID::release, ParamID::stretch, ParamID::spread, ParamID::formant, ParamID::air, ParamID::space };
+    const char* labels[numKnobs] = { "Attack", "Release", "Stretch", "Spread", "Formant", "Air", "Space" };
     for (int i = 0; i < numKnobs; ++i)
     {
         auto& knob = knobs[static_cast<size_t> (i)];
@@ -205,16 +205,43 @@ SingPanel::SingPanel (SingProcessor& p)
     knobs[stretch].formatValue = [] (double v) { return v >= 97.0 ? juce::String ("Held") : formatPercent (static_cast<float> (v)); };
     knobs[spread].formatValue = [] (double v) { return formatPercent (static_cast<float> (v)); };
     knobs[formant].formatValue = [] (double v) { return formatSemitones (static_cast<float> (v)); };
+    knobs[air].formatValue = knobs[space].formatValue = [] (double v) { return formatPercent (static_cast<float> (v)); };
     knobs[attack].setTooltip ("How slowly each note fades in, up to 20 s");
     knobs[release].setTooltip ("How slowly each note fades out after you let go, up to 30 s");
     knobs[stretch].setTooltip ("Slows the voice down without changing its pitch. At the top it holds its breath");
     knobs[spread].setTooltip ("Up to seven detuned copies across the stereo field: one singer becomes a choir");
     knobs[formant].setTooltip ("Moves the vowel's character: down is larger and darker, up is smaller and glassier");
+    knobs[air].setTooltip ("A gentle lift at the top, with a soft breath that follows the voice");
+    knobs[space].setTooltip ("A long reverb: from a small room to a huge wash that rings for 20 s");
 
     // Bottom row
     addAndMakeVisible (holdButton);
     buttonAttachments.push_back (std::make_unique<ButtonAttachment> (state, ParamID::hold, holdButton));
-    holdButton.setTooltip ("Freeze the grain cloud: the pad holds still for as long as the key is down");
+    holdButton.setTooltip ("Freeze the pad: it holds still for as long as the key is down");
+
+    // The engine: Grain or Bloom.
+    const auto engines = engineNames();
+    for (int i = 0; i < 2; ++i)
+    {
+        auto& b = engineButtons[(size_t) i];
+        b = std::make_unique<PillToggle> (engines[i].toUpperCase());
+        b->setClickingTogglesState (false);
+        b->onClick = [this, i] { engineAttachment->setValueAsCompleteGesture (static_cast<float> (i)); };
+        addAndMakeVisible (*b);
+    }
+    engineButtons[0]->setTooltip ("Grain: the voice in tiny overlapping grains, close to how it was sung");
+    engineButtons[1]->setTooltip ("Bloom: the voice smeared into a smooth, endless glow, dreamier and slower to change");
+    engineAttachment = std::make_unique<juce::ParameterAttachment> (
+        *state.getParameter (ParamID::engine),
+        [this] (float value)
+        {
+            bloomEngine = juce::roundToInt (value) == 1;
+            for (int i = 0; i < 2; ++i)
+                engineButtons[(size_t) i]->setToggleState (i == (bloomEngine ? 1 : 0), juce::dontSendNotification);
+            if (! motion)
+                bloomMix = bloomEngine ? 1.0f : 0.0f;
+            repaint();
+        });
     for (auto* d : { &voicesDragger, &glideDragger, &outputDragger })
         addAndMakeVisible (d);
     sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::voices, voicesDragger));
@@ -243,6 +270,8 @@ SingPanel::SingPanel (SingProcessor& p)
     };
 
     directionAttachment->sendInitialUpdate();
+    engineAttachment->sendInitialUpdate();
+    bloomMix = bloomEngine ? 1.0f : 0.0f;
     bypassAttachment->sendInitialUpdate();
     updatePresetDisplay();
     updateVoiceDisplay();
@@ -265,6 +294,7 @@ void SingPanel::setBypassed (bool shouldBypass)
     starButton->setTitle (bypassed ? "Turn Sing on" : "Bypass Sing");
     starButton->setTooltip (bypassed ? "Click the evening star to turn Sing back on" : "Click the evening star to bypass");
     sky.setBypassed (bypassed);
+    bloomSky.setBypassed (bypassed);
 
     // Dim the controls while bypassed; they still work.
     const float alpha = bypassed ? 0.45f : 1.0f;
@@ -272,6 +302,8 @@ void SingPanel::setBypassed (bool shouldBypass)
                                                              &holdButton, &voicesDragger, &glideDragger, &outputDragger })
         c->setAlpha (alpha);
     for (auto& b : directionButtons)
+        b->setAlpha (alpha);
+    for (auto& b : engineButtons)
         b->setAlpha (alpha);
     for (auto& k : knobs)
         k.setAlpha (alpha);
@@ -471,6 +503,23 @@ void SingPanel::frame (double seconds, bool animate)
     motion = animate;
     sky.setMotion (animate);
     sky.advance (seconds);
+    bloomSky.setMotion (animate);
+    bloomSky.advance (seconds);
+
+    // Switching engine fades one sky into the other over about a second.
+    const float target = bloomEngine ? 1.0f : 0.0f;
+    const auto dt = static_cast<float> (lastFrameTime < 0.0 ? 0.0 : juce::jlimit (0.0, 0.1, seconds - lastFrameTime));
+    lastFrameTime = seconds;
+    if (! animate)
+        bloomMix = target;
+    else if (std::abs (bloomMix - target) > 0.0f)
+    {
+        bloomMix += (target > bloomMix ? 1.0f : -1.0f) * dt;
+        bloomMix = juce::jlimit (0.0f, 1.0f, bloomMix);
+        if (std::abs (bloomMix - target) < 1.0e-3f)
+            bloomMix = target;
+        repaint();
+    }
     if (animate)
         repaint();
 
@@ -484,6 +533,19 @@ void SingPanel::frame (double seconds, bool animate)
         lights[i] = { f.position, f.level, f.weight, f.pan, f.pitchRatio, f.zone, f.note, f.copy, f.noteId };
     }
     waveform.setLights (lights, animate, seconds);
+
+    // On the dark Bloom sky the bottom row and the voice's shadow switch to light colours.
+    const bool dark = bloomMix > 0.5f;
+    for (auto* d : { &voicesDragger, &glideDragger, &outputDragger })
+        d->setOnSunset (! dark);
+    waveform.setDarkSky (dark);
+
+    // The Bloom sky glows brighter while notes sound.
+    float level = 0.0f;
+    for (const auto& f : found)
+        if (f.note >= 0)
+            level = std::max (level, f.level);
+    bloomSky.setActivity (level);
 
     const auto now = nowSeconds();
     if (now - lastPresetCheck > 0.2)
@@ -534,14 +596,21 @@ void SingPanel::resized()
         rx -= w + 28.0f;
     }
 
-    // Knobs: five across the 960-wide row, dials starting at y = 398.
-    const float knobW = (960.0f - 4.0f * 8.0f) / 5.0f;
+    // Knobs: seven across the 960-wide row, dials starting at y = 398.
+    const float knobW = (960.0f - 6.0f * 8.0f) / static_cast<float> (numKnobs);
     for (int i = 0; i < numKnobs; ++i)
         knobs[static_cast<size_t> (i)].setBounds (
             juce::Rectangle<float> (40.0f + static_cast<float> (i) * (knobW + 8.0f), 398.0f - Knob::topMargin, knobW, Knob::height).toNearestInt());
 
     // Bottom row.
     holdButton.setBounds (juce::Rectangle<float> (40.0f, 556.0f, holdButton.preferredWidth(), 40.0f).toNearestInt());
+    float ex = 40.0f + holdButton.preferredWidth() + 22.0f;
+    for (auto& b : engineButtons)
+    {
+        const float w = b->preferredWidth();
+        b->setBounds (juce::Rectangle<float> (ex, 556.0f, w, 40.0f).toNearestInt());
+        ex += w + 6.0f;
+    }
     rx = 1000.0f;
     for (auto [d, widest] : { std::pair { &outputDragger, juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92" "36.0 dB")) }, std::pair { &glideDragger, juce::String ("2.0 s") },
                               std::pair { &voicesDragger, juce::String ("16") } })
@@ -557,7 +626,16 @@ void SingPanel::resized()
 
 void SingPanel::paint (juce::Graphics& g)
 {
-    sky.draw (g);
+    if (bloomMix < 1.0f)
+        sky.draw (g);
+    if (bloomMix > 0.0f)
+    {
+        if (bloomMix < 1.0f)
+            g.beginTransparencyLayer (bloomMix);
+        bloomSky.draw (g);
+        if (bloomMix < 1.0f)
+            g.endTransparencyLayer();
+    }
 
     // Logo: a small gold star and the name.
     g.setColour (Colours::gold);
@@ -576,9 +654,12 @@ void SingPanel::paint (juce::Graphics& g)
     drawTrackedText (g, "LOOP", { 40.0f, 346.0f, 80.0f, 36.0f }, Fonts::sans (12.0f, false, 0.24f),
                      juce::Justification::centredLeft, Colours::soft.withMultipliedAlpha (bypassed ? 0.45f : 1.0f));
 
-    // Hold's glow, like a CSS box-shadow under the lit pill.
+    // Hold's glow, like a CSS box-shadow under the lit pill, and the lit engine's.
     if (holdButton.getToggleState())
         drawGlow (g, holdButton.getBounds().toFloat(), 20.0f, 16.0f, Colours::gold.withAlpha (0.5f));
+    for (auto& b : engineButtons)
+        if (b->getToggleState())
+            drawGlow (g, b->getBounds().toFloat(), 20.0f, 12.0f, Colours::gold.withAlpha (0.3f));
 
     if (bypassed)
     {

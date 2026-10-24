@@ -92,6 +92,7 @@ public:
     std::function<juce::String (double)> formatValue;
     void paint (juce::Graphics&) override;
     float preferredWidth (const juce::String& widestValue) const;
+    void setOnSunset (bool s) { if (s != sunset) { sunset = s; repaint(); } }
 
 private:
     juce::String caption;

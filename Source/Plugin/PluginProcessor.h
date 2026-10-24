@@ -4,12 +4,16 @@
 #include "PresetManager.h"
 #include "VoiceData.h"
 
+#include "Effects/Air.h"
+#include "Effects/Space.h"
 #include "Voice/SingSynth.h"
 #include "Voice/SourceExchange.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
+#include <optional>
+#include <vector>
 
 namespace sing
 {
@@ -78,6 +82,7 @@ public:
 private:
     void parameterChanged (const juce::String& id, float) override;
     void timerCallback() override;
+    // Message thread: asks the loop builder for a loop with the current settings.
     void rebuildLoop();
     SynthSettings readSettings() const noexcept;
     void handleMidi (const juce::MidiMessage&) noexcept;
@@ -89,7 +94,36 @@ private:
     std::atomic<float> uiScale { 1.0f };
 
     SourceExchange exchange;
+
+    // Builds loops off the message thread (Bloom's analysis of a long loop takes a moment)
+    // and publishes them to the exchange. Only this thread publishes or collects garbage.
+    class LoopBuilder final : public juce::Thread
+    {
+    public:
+        explicit LoopBuilder (SingProcessor& p) : juce::Thread ("Sing loop builder"), owner (p) {}
+        ~LoopBuilder() override { stopThread (4000); }
+
+        struct Request
+        {
+            VoiceData::Ptr voice;
+            LoopSettings loop;
+            int trimStart = 0, trimLength = 1;
+        };
+        void request (Request r);
+        void run() override;
+
+    private:
+        SingProcessor& owner;
+        juce::CriticalSection lock;
+        std::optional<Request> pending;
+        juce::WaitableEvent wake;
+    };
+    LoopBuilder builder { *this };
+
     SingSynth synth;
+    Air air;
+    Space space;
+    std::vector<float> monoRight;   // a right channel for the effects when the output is mono
     std::atomic<bool> loopDirty { true };
     std::atomic<int> voiceTrimStart { 0 }, voiceTrimLength { 1 };
     std::atomic<float> rootHz { 261.63f };
@@ -117,6 +151,9 @@ private:
     std::atomic<float>* glide = nullptr;
     std::atomic<float>* output = nullptr;
     std::atomic<float>* bypass = nullptr;
+    std::atomic<float>* engine = nullptr;
+    std::atomic<float>* airAmount = nullptr;
+    std::atomic<float>* spaceAmount = nullptr;
     juce::AudioProcessorParameter* bypassParam = nullptr;
 
     // Output level and bypass ramp smoothly.

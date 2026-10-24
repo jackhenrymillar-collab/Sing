@@ -1,7 +1,11 @@
 #include "RealFFT.h"
 
+#include <array>
+#include <atomic>
 #include <cassert>
 #include <cmath>
+#include <memory>
+#include <mutex>
 
 namespace sing
 {
@@ -9,6 +13,44 @@ namespace sing
 namespace
 {
 constexpr double twoPi = 6.283185307179586476925;
+constexpr int maxSharedOrder = 20;
+
+std::array<std::atomic<const RealFFT*>, maxSharedOrder + 1>& sharedTable()
+{
+    static std::array<std::atomic<const RealFFT*>, maxSharedOrder + 1> table {};
+    return table;
+}
+
+int orderOf (int size) noexcept
+{
+    int order = 0;
+    while ((1 << order) < size)
+        ++order;
+    return (1 << order) == size ? order : -1;
+}
+} // namespace
+
+void RealFFT::makeShared (int size)
+{
+    static std::mutex lock;
+    static std::array<std::unique_ptr<RealFFT>, maxSharedOrder + 1> owned;
+    const int order = orderOf (size);
+    if (order < 2 || order > maxSharedOrder)
+        return;
+    const std::scoped_lock hold (lock);
+    if (owned[(size_t) order] == nullptr)
+    {
+        owned[(size_t) order] = std::make_unique<RealFFT> (size);
+        sharedTable()[(size_t) order].store (owned[(size_t) order].get(), std::memory_order_release);
+    }
+}
+
+const RealFFT* RealFFT::shared (int size) noexcept
+{
+    const int order = orderOf (size);
+    if (order < 2 || order > maxSharedOrder)
+        return nullptr;
+    return sharedTable()[(size_t) order].load (std::memory_order_acquire);
 }
 
 void RealFFT::prepare (int size)

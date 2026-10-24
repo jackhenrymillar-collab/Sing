@@ -8,6 +8,11 @@ juce::StringArray directionNames()
     return { "Forward", "Backward", "Back & forth" };
 }
 
+juce::StringArray engineNames()
+{
+    return { "Grain", "Bloom" };
+}
+
 juce::String formatSeconds (float s)
 {
     if (s < 0.995f)
@@ -79,6 +84,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::loopLength, v }, "Loop Length", Range { 1.0f, 100.0f, 0.01f }, 40.0f, withText (formatPercent)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::loopFade, v }, "Loop Fade", Range { 0.0f, 100.0f, 0.1f }, 25.0f, withText (formatPercent)));
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::direction, v }, "Direction", directionNames(), 0));
+    // Added with Bloom, Air and Space. Their defaults leave older sessions and presets
+    // sounding as they did.
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::engine, v }, "Engine", engineNames(), 0));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::air, v }, "Air", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::space, v }, "Space", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatPercent)));
     // Also the host's bypass switch (see SingProcessor::getBypassParameter). Clicking the evening star toggles it.
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::bypass, v }, "Bypass", false));
 

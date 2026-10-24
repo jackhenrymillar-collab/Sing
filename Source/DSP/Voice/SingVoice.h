@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Bloom/BloomVoice.h"
 #include "Stretch/GranularEngine.h"
 #include "Voice/FormantShifter.h"
 
@@ -26,6 +27,10 @@ struct VoiceSettings
     // formant shifter uses short fixed grains instead of following the period.
     float rootHz = 261.63f;
     bool pitched = true;
+
+    // Which engine new notes use. A note keeps its engine until it ends. A Bloom note needs
+    // a loop with Bloom's analysis; without one it plays granular.
+    StretchMode mode = StretchMode::granular;
 };
 
 // The gentle fade in and out of each note.
@@ -54,8 +59,9 @@ private:
     float attackStep = 1.0f, releaseCoeff = 0.0f, killStep = 1.0f;
 };
 
-// One playing key. Up to seven Spread copies, each a granular Stretch engine followed by a
-// formant shifter, panned across the stereo field and mixed under the envelope.
+// One playing key. In granular mode, up to seven Spread copies, each a granular Stretch
+// engine followed by a formant shifter, panned across the stereo field. In Bloom mode, one
+// BloomVoice that builds all the copies in one spectrum. Either is mixed under the envelope.
 class SingVoice
 {
 public:
@@ -97,6 +103,11 @@ public:
     struct CopyLight { double position; float weight, pan, pitchRatio, zoneSamples; };
     int getCopyLights (CopyLight* lights, int maxCount) const noexcept;   // centre copy first
 
+    bool isBloom() const noexcept { return bloomNote; }
+    // For a Bloom note, how wide a stretch of the voice each frame hears (voice samples),
+    // centred on playPosition(). 0 for granular notes.
+    double bloomWindowSamples() const noexcept { return bloomNote ? bloom.windowSamples() : 0.0; }
+
     // How a copy sits in the Spread: its detune and pan, and its share of the level.
     struct CopyShape { float cents, pan, weight; };
     static CopyShape copyShape (int copy, float spread) noexcept;
@@ -112,6 +123,11 @@ private:
     };
 
     void renderSubBlock (float* left, float* right, int numSamples) noexcept;
+    void applyEnvelope (float* left, float* right, int numSamples) noexcept;
+    // Fills each copy's shape for a Spread setting; returns the gain that keeps their
+    // total power at 1.
+    static float copyShapes (float spread, std::array<CopyShape, (size_t) maxCopies>& shapes) noexcept;
+    BloomVoice::Parameters bloomParameters (const std::array<CopyShape, (size_t) maxCopies>& shapes, float norm) const noexcept;
     void startCopy (int index) noexcept;
     float targetSemitones() const noexcept;
     float pitchRatio (int copy) const noexcept;
@@ -120,6 +136,8 @@ private:
 
     double hostRate = 48000.0;
     std::array<Copy, (size_t) maxCopies> copies;
+    BloomVoice bloom;
+    bool bloomNote = false;
     std::vector<float> envelopeGains, mixLeft, mixRight;
     Envelope envelope;
     VoiceSettings voiceSettings;

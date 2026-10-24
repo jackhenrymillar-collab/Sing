@@ -1,8 +1,7 @@
 # Stretch engine
 
 Sing's Stretch turns a short vocal loop into an endless pad by replaying it in small,
-overlapping grains. This page describes the granular engine and where the second engine,
-Bloom, will plug in.
+overlapping grains. This page describes the granular engine.
 
 The code is plain C++ (C++20) in `Source/DSP/Stretch`, with no JUCE dependency, so it builds and is
 tested on any machine. The plugin links it as the `SingDSP` library.
@@ -89,18 +88,12 @@ lock. Each engine has a fixed pool of 64 grains.
 not a Mac). Spread's copies multiply this (see [voices-spread-formant.md](voices-spread-formant.md));
 sharing grain reads between Spread copies is the next saving to make.
 
-## Adding Bloom
+## Bloom
 
-Bloom, the Paulstretch-style engine in the design doc, slots in without changing callers:
-
-1. Add a `BloomEngine : StretchEngine` and return it from `createStretchEngine (StretchMode::bloom)`.
-2. Build its magnitude spectrogram in `analyseSource (StretchMode::bloom, …)`. `LoopSource`
-   stores it and hands it back through `analysis (StretchMode::bloom)`. It reads the same
-   circular play buffer, which already wraps around the seam as the design doc asks.
-3. `StretchParameters` (speed, pitch, Hold) mean the same thing in both engines. Bloom's own
-   settings (window size) live on `BloomEngine`, as grain settings live on `GranularEngine`.
-
-Today `createStretchEngine (StretchMode::bloom)` falls back to granular.
+The second engine, Bloom, is a spectral smear rather than a `StretchEngine`: see
+[bloom-space-air.md](bloom-space-air.md). `LoopSource::build` makes its analysis when
+`LoopSettings::analyseForBloom` is set, and `createStretchEngine (StretchMode::bloom)` still
+returns granular, which plays any Bloom note whose loop has no analysis.
 
 ## Trying it by ear
 

@@ -19,7 +19,7 @@ enum class LoopDirection
 enum class StretchMode
 {
     granular,
-    bloom,   // reserved: the Paulstretch-style engine, not written yet
+    bloom,   // Paulstretch-style spectral smear (Bloom/BloomVoice.h)
     count
 };
 
@@ -33,6 +33,9 @@ struct LoopSettings
     // Length of one cycle of the voice at its root pitch, in samples, from pitch detection.
     // 0 when the voice is unpitched (breaths, whispers).
     float pitchPeriod = 0.0f;
+
+    // Build Bloom's analysis too (about 0.1 s of work per 10 s of loop, and a few MB).
+    bool analyseForBloom = false;
 
     // The voice's pitch over time, when it has been measured. Voices that move between notes
     // need it: pitch-synchronous processing must follow the note actually sounding, not the

@@ -26,6 +26,10 @@ include (FetchContent)
 # ---------------------------------------------------------------------------
 add_library (SingDSP STATIC
     Source/DSP/Stretch/LoopSource.cpp
+    Source/DSP/Bloom/BloomAnalysis.cpp
+    Source/DSP/Bloom/BloomVoice.cpp
+    Source/DSP/Effects/Air.cpp
+    Source/DSP/Effects/Space.cpp
     Source/DSP/Common/RealFFT.cpp
     Source/DSP/Stretch/StretchEngine.cpp
     Source/DSP/Stretch/GranularEngine.cpp
@@ -99,6 +103,7 @@ if (SING_BUILD_PLUGIN)
         Source/Plugin/VoiceData.cpp)
     set (SING_UI_SOURCES
         Source/Plugin/PluginEditor.cpp
+        Source/Plugin/UI/BloomSky.cpp
         Source/Plugin/UI/BlueHourSky.cpp
         Source/Plugin/UI/Controls.cpp
         Source/Plugin/UI/Theme.cpp
@@ -155,6 +160,8 @@ if (SING_BUILD_TESTS)
     FetchContent_MakeAvailable (Catch2)
 
     add_executable (SingDSPTests
+        Tests/BloomTests.cpp
+        Tests/EffectsTests.cpp
         Tests/StretchTests.cpp
         Tests/VoiceTests.cpp)
     target_link_libraries (SingDSPTests PRIVATE SingDSP Catch2::Catch2WithMain)
