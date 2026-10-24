@@ -27,11 +27,11 @@ When Bloom is selected, every loop is analysed as it is built (on the loop build
   60 dB below its loudest point.
 - **Fine structure:** the magnitudes with the envelope divided out (the harmonics and the
   breath), stored as 16-bit log values.
-- **Harmonics:** peaks at least 6 dB over the local floor. Vibrato splits a harmonic into close
-  sidebands a few Hz apart, and played back steadily those beat against each other at the
-  vibrato rate (a 6 dB tremble on a held vowel). So peaks within 3 % (and at least 8 Hz) of a
-  stronger one join it. Each harmonic is redrawn as one clean main lobe of the window, at the
-  centre of its energy, holding all of it.
+- **Classic (the default):** the magnitudes are kept exactly as analysed, every bin.
+- **Locked harmonics** (`LoopSettings::bloomLockHarmonics`, not on the panel): peaks at
+  least 6 dB over the local floor are found as harmonics. Vibrato splits a harmonic into
+  close sidebands a few Hz apart, so peaks within 3 % (and at least 8 Hz) of a stronger one
+  join it, and each harmonic is redrawn as one clean main lobe of the window.
 
 A 2 s loop takes about 25 ms to analyse.
 
@@ -40,25 +40,27 @@ A 2 s loop takes about 25 ms to analyse.
 Each note builds a new frame every quarter window (about 0.17 s) and overlap-adds it with a
 Hann window:
 
-1. For each Spread copy, read the analysis at the copy's position:
-   - the **harmonics** move with the pitch;
-   - **breath and noise** stay where they were recorded on a pitched voice (they have no pitch
-     to move), but move with the pitch on unpitched voices;
-   - the **envelope** moves with Formant only, so the vowel stays put across the keys.
-2. **Phases:**
-   - Breath and noise get new random phases every frame: this is the smear.
-   - Harmonics keep running at their own frequency from frame to frame, with a small random
-     nudge for shimmer. Fully random phases make a clear vowel tremble by 10 dB or more. This
-     is phase locking in the style of Laroche and Dolson.
-   - Left and right differ by a fixed random offset per harmonic, scaled by Spread (Width).
-     At Spread 0 the note still holds up in mono: the left-right correlation is about 0.9.
+1. For each Spread copy, read the analysis at the copy's position. The whole spectrum (the
+   fine structure) moves with the pitch; the **envelope** moves with Formant only, so the
+   vowel stays put across the keys.
+2. **Phases:** every bin gets a new, fully random phase every frame, harmonics included.
+   This is the classic method (window, FFT, random phases with the magnitudes kept,
+   overlap-add) and it gives Bloom its smear. The level shimmers a little as a result
+   (about 4.6 dB between the 10 % and 90 % points of 50 ms slices on Jack's psy vox sample;
+   granular moves 6 to 10 dB).
+   - Left and right differ by a fixed offset per bin, scaled by Spread (Width).
+   - With locked harmonics instead, harmonics keep running at their own frequency from
+     frame to frame with a small random nudge (phase locking in the style of Laroche and
+     Dolson), and breath stays at its recorded pitch. A held vowel then moves by under
+     3 dB, but it is further from the classic sound.
 3. Two inverse FFTs per frame (left and right), however many Spread copies there are.
 4. Move the read position on by a hop times the Stretch speed. Hold stops it.
 
 **Level.** The note matches the loop's level at the root, and stays within about 3 dB of it
 over two octaves of keys and the whole Stretch range, as granular does. Harmonics moved up land
-on quieter or louder parts of the envelope; `harmonicsGain` compares the envelope at the
-harmonics as recorded and as played, and makes up the difference.
+on quieter or louder parts of the envelope, and each one's peak widens by the ratio;
+`harmonicsGain` compares the envelope at the harmonics as recorded and as played, and makes up
+the difference.
 
 **Starting a note.** The first frame takes about 85 ms to build (paced so a chord can start
 at once). It then starts a hop into its window, with make-up gain while the overlap fills, so
@@ -82,12 +84,12 @@ A Bloom note whose loop has no analysis yet (just switched, still building) play
 | --- | --- |
 | Pitch at -12, 0, +12 semitones | within 1 % |
 | Level against the loop, over keys and Stretch | -2.1 to +0.8 dB |
-| Held "ah" with vibrato, 50 ms slices | 0.3 dB (was 6.5 dB before folding the sidebands) |
+| Held "ah" with vibrato, 50 ms slices | classic: 8.6 dB, never more than 5.5 dB under the held level; locked: 0.3 dB |
 | Note start | 84 ms |
 | Spread 0 to 1, left-right correlation | 0.91 to about -0.2 |
 
-On Jack's psy vox sample, Bloom at Stretch 0.8 stays within 1.4 to 3.4 dB over 50 ms slices
-across two octaves of keys (granular: 6 to 10 dB).
+On Jack's psy vox sample at Stretch 0.8, 10 % to 90 % spread of 50 ms slice levels across two
+octaves of keys: classic 3.4 to 4.6 dB, locked 1.5 to 1.9 dB (granular's full range: 6 to 10 dB).
 
 ## Air
 

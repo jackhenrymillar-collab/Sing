@@ -21,12 +21,13 @@ namespace sing
 // 2. Inverse FFT each channel, apply a Hann window and overlap-add four frames deep (a new
 //    frame every quarter window).
 //
-// Phases: breath and noise get new random phases every frame, which is the smear. Harmonics
-// (found in the analysis) instead keep running at their own frequency from frame to frame,
-// with a small random nudge for shimmer. Random phases on a clear vowel make it tremble by
-// 10 dB or more, because each harmonic becomes a few close bins beating against each other.
-// Locked harmonics add in amplitude across the overlapping frames, and noise adds in power;
-// Hann at 4x overlap keeps both constant (its values sum to 2 and its squares to 1.5).
+// Phases: by default (the classic method) every bin gets a new random phase every frame,
+// harmonics included, and the magnitudes are kept exactly as analysed. That is the smear,
+// and it makes the level shimmer a little. With LoopSettings::bloomLockHarmonics, the
+// harmonics (found in the analysis) instead keep running at their own frequency from frame
+// to frame, with a small random nudge, so a clear vowel stays steady. Locked harmonics add
+// in amplitude across the overlapping frames, and noise adds in power; Hann at 4x overlap
+// keeps both constant (its values sum to 2 and its squares to 1.5).
 // 3. Move the read position on by a hop times the speed. Hold stops it, and the
 //    random phases keep the held sound alive.
 //

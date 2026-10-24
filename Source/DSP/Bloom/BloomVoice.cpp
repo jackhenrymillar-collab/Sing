@@ -251,17 +251,26 @@ void BloomVoice::beginFrame() noexcept
 
         const float pitch = std::max (layer.pitchRatio, 1.0e-3f);
         f.binScale = outBinHz / (pitch * analysis->binHz());
-        f.noiseScale = source->periodAt (at) >= 2.0f ? outBinHz / analysis->binHz() : f.binScale;
+        // Classic (unlocked) frames have no harmonics marked, so everything moves with the
+        // pitch, as the method shifts the whole spectrum.
+        f.noiseScale = analysis->locksHarmonics() && source->periodAt (at) >= 2.0f ? outBinHz / analysis->binHz() : f.binScale;
         // Magnitudes are densities, so a frame of N bins needs sqrt(N) to hold the same
         // power. Breath and noise keep their level when the pitch moves, since the envelope
         // stays put.
         f.amplitude = std::sqrt ((float) size);
+        // Classic frames carry the harmonics as noise bins, moved with the pitch: each one's
+        // peak is widened by the ratio (its power grows by it), and the harmonics land on
+        // other parts of the envelope. Make up both, as for locked harmonics.
+        if (! analysis->locksHarmonics())
+            f.amplitude *= harmonicsGain (*analysis, f.frameA, at, pitch) / std::sqrt (pitch);
         // Harmonics: moving up by a ratio leaves 1/ratio as many under the envelope and
         // widens each one's peak by the ratio (its bins add in step), so sqrt(N / ratio)
         // keeps their power...
-        f.tonalAmplitude = std::sqrt ((float) size / pitch) * coherentGain
-                         // ...as long as the envelope is as loud where they land.
-                         * harmonicsGain (*analysis, f.frameA, at, pitch);
+        f.tonalAmplitude = analysis->locksHarmonics()
+                             ? std::sqrt ((float) size / pitch) * coherentGain
+                                   // ...as long as the envelope is as loud where they land.
+                                   * harmonicsGain (*analysis, f.frameA, at, pitch)
+                             : 0.0f;
         f.gainLeft = layer.gainLeft * outputGain;
         f.gainRight = layer.gainRight * outputGain;
         f.peakBin = -1;

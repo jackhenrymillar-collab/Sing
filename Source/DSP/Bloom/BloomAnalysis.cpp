@@ -117,6 +117,8 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
     a->peakData.assign ((size_t) a->frames * (size_t) bins, noPeak);
 
     const int channels = source.numChannels();
+    const bool lockHarmonics = source.settings().bloomLockHarmonics;
+    a->locked = lockHarmonics;
     for (int f = 0; f < a->frames; ++f)
     {
         // The window is centred on the frame's position, reading round the loop.
@@ -199,8 +201,9 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
         // So peaks within reach of a stronger one join it, and each harmonic is redrawn as
         // one clean main lobe of the analysis window, at the centre of its energy, holding
         // all of it. What is left between harmonics stays as noise, with random phases.
+        // With harmonics unlocked (the classic method) the spectrum is kept exactly as it is.
         peakList.clear();
-        for (int k = 2; k < bins - 2; ++k)
+        for (int k = 2; lockHarmonics && k < bins - 2; ++k)
         {
             const float m = mag[(size_t) k];
             if (m >= 2.0f * floorEnv[(size_t) k] && m > mag[(size_t) k - 1] && m >= mag[(size_t) k + 1])
