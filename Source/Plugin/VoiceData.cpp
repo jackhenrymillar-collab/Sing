@@ -18,7 +18,7 @@ namespace
     struct PlaceholderInfo { PlaceholderVowel vowel; const char* key; const char* name; const char* description; };
 
     constexpr PlaceholderInfo kPlaceholders[] = {
-        { PlaceholderVowel::ooh,    "ooh",    "Hollow Ooh",  "A breathy \"ooh\" (stand-in until the recorded voices arrive)" },
+        { PlaceholderVowel::ooh,    "ooh",    "Hollow Ooh",  "A soft \"ooh\" (stand-in until the recorded voices arrive)" },
         { PlaceholderVowel::ah,     "ah",     "Soft Ah",     "A soft \"ah\" (stand-in until the recorded voices arrive)" },
         { PlaceholderVowel::hum,    "hum",    "Low Hum",     "A hummed note (stand-in until the recorded voices arrive)" },
         { PlaceholderVowel::breath, "breath", "Two Breaths", "Two slow breaths (stand-in until the recorded voices arrive)" },
@@ -26,13 +26,13 @@ namespace
         { PlaceholderVowel::openingOoh,    "openingOoh",    "Opening Ooh",    "An \"ooh\" that opens to \"ah\" and closes again (generated)" },
         { PlaceholderVowel::risingEe,      "risingEe",      "Rising Ee",      "An \"ah\" that brightens through \"eh\" to \"ee\" (generated)" },
         { PlaceholderVowel::swellingAlto,  "swellingAlto",  "Swelling Alto",  "A straight \"oh\" that swells, its vibrato growing (generated)" },
-        { PlaceholderVowel::whisperToAh,   "whisperToAh",   "Whisper to Ah",  "A whisper that finds its voice (generated)" },
+        { PlaceholderVowel::wakingAh,      "wakingAh",      "Waking Ah",      "A near-pure \"ah\" whose harmonics open out (generated)" },
         { PlaceholderVowel::smallChoir,    "smallChoir",    "Small Choir",    "Six singers on \"ah\", drifting to \"oh\" (generated)" },
         { PlaceholderVowel::lowOm,         "lowOm",         "Low Om",         "A low \"oh\" that closes to \"mm\" (generated)" },
         { PlaceholderVowel::highEe,        "highEe",        "High Ee",        "A light, high \"ee\" with quick vibrato (generated)" },
         { PlaceholderVowel::slowWah,       "slowWah",       "Slow Wah",       "\"Ooh\" and \"ah\" in turn, opening and closing (generated)" },
         { PlaceholderVowel::overtoneDrone, "overtoneDrone", "Overtone Drone", "A throat-sung drone with a sweeping, whistled overtone (generated)" },
-        { PlaceholderVowel::fallingSigh,   "fallingSigh",   "Falling Sigh",   "An \"ah\" that sighs down a tone into breath (generated)" },
+        { PlaceholderVowel::fallingSigh,   "fallingSigh",   "Falling Sigh",   "An \"ah\" that sighs down a tone, softening as it falls (generated)" },
     };
 
     static_assert (std::size (kPlaceholders) == std::size (allPlaceholderVowels), "every placeholder voice needs a name");

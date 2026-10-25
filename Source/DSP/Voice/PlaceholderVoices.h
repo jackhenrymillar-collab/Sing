@@ -5,35 +5,36 @@
 namespace sing
 {
 
-// Synthetic stand-ins for the factory voices until the recorded ones exist. Each is a sung
-// vowel made by formant synthesis: a glottal source with vibrato, shaped by four vowel
-// formants (Peterson and Barney's 1952 measurements), plus a little breath noise. They are
-// generated, so there is nothing to license.
+// Synthetic stand-ins for the factory voices until the recorded ones exist. Each sung voice is
+// made by formant synthesis: a harmonic glottal source with vibrato, shaped by vowel formants
+// (Peterson and Barney's 1952 measurements). They are pure harmonic tone with no breath noise;
+// the harmonics above the top formant are lifted instead, for shine. Only Two Breaths is noise.
+// They are generated, so there is nothing to license.
 enum class PlaceholderVowel
 {
-    ooh,      // breathy "ooh"
+    ooh,      // soft "ooh"
     ah,       // soft "ah"
     hum,      // closed-mouth "mm"
     breath,   // unpitched breaths
 
-    // Voices that move: the vowel, vibrato, breath or loudness changes across the recording,
+    // Voices that move: the vowel, vibrato, brightness or loudness changes across the recording,
     // so where the loop sits and how far Stretch spreads it changes the sound.
     openingOoh,     // "ooh" opens to "ah" and closes again
     risingEe,       // "ah" brightens through "eh" to "ee"
     swellingAlto,   // "oh" that starts straight and swells, vibrato growing with it
-    whisperToAh,    // a whisper that finds its voice
+    wakingAh,       // a near-pure "ah" whose harmonics open out until it is full and bright
     smallChoir,     // six singers on one "ah", drifting to "oh"
     lowOm,          // a low "oh" that closes to "mm"
     highEe,         // a light, high "ee" with quick vibrato
     slowWah,        // "ooh" and "ah" in turn, opening and closing like a slow wah
     overtoneDrone,  // a throat-sung drone whose whistling overtone sweeps up and down
-    fallingSigh     // an "ah" that sighs down a tone into breath
+    fallingSigh     // an "ah" that sighs down a tone, softening as it falls
 };
 
 constexpr PlaceholderVowel allPlaceholderVowels[] {
     PlaceholderVowel::ooh, PlaceholderVowel::ah, PlaceholderVowel::hum, PlaceholderVowel::breath,
     PlaceholderVowel::openingOoh, PlaceholderVowel::risingEe, PlaceholderVowel::swellingAlto,
-    PlaceholderVowel::whisperToAh, PlaceholderVowel::smallChoir, PlaceholderVowel::lowOm,
+    PlaceholderVowel::wakingAh, PlaceholderVowel::smallChoir, PlaceholderVowel::lowOm,
     PlaceholderVowel::highEe, PlaceholderVowel::slowWah, PlaceholderVowel::overtoneDrone,
     PlaceholderVowel::fallingSigh
 };
