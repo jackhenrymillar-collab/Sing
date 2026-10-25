@@ -10,7 +10,7 @@ using namespace ui;
 
 namespace
 {
-    constexpr int kPanelWidth = 1040, kPanelHeight = 620;
+    constexpr int kPanelWidth = (int) ui::panelWidth, kPanelHeight = (int) ui::panelHeight;
     constexpr double kFrameInterval = 1.0 / 30.0;
     const juce::String kDot (juce::CharPointer_UTF8 ("  \xc2\xb7  "));
 
@@ -94,7 +94,8 @@ public:
 };
 
 //==============================================================================
-// The voice's name and description. Click for the root note and silence trim.
+// The voice's name, root and length, one small line above the waveform. Click for the root
+// note and silence trim.
 class SingPanel::VoiceInfo final : public juce::Button
 {
 public:
@@ -103,13 +104,6 @@ public:
         setTitle ("Voice settings");
         setTooltip ("Root note and silence trim");
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
-    }
-
-    // Compact: one line, the name and then the details, for while Advanced is open.
-    void setCompact (bool c)
-    {
-        compact = c;
-        repaint();
     }
 
     void set (const juce::String& lengthText, const juce::String& voiceName, const juce::String& line)
@@ -122,33 +116,23 @@ public:
 
     void paintButton (juce::Graphics& g, bool highlighted, bool) override
     {
-        const float w = static_cast<float> (getWidth());
-        if (compact)
-        {
-            const auto nameFont = Fonts::serif (34.0f);
-            drawTrackedText (g, name, { 0.0f, 0.0f, w, 44.0f }, nameFont, juce::Justification::centredLeft, Colours::ivory);
-            const float x = trackedTextWidth (name, nameFont) + 18.0f;
-            drawTrackedText (g, description + kDot + length, { x, 4.0f, w - x, 44.0f }, Fonts::sans (13.0f),
-                             juce::Justification::centredLeft, highlighted ? Colours::ivory : Colours::soft);
-            return;
-        }
-        drawTrackedText (g, "VOICE" + kDot + length, { 0.0f, 0.0f, w, 16.0f }, Fonts::sans (12.0f, false, 0.3f),
-                         juce::Justification::centredLeft, Colours::soft);
-        drawTrackedText (g, name, { 0.0f, 18.0f, w, 50.0f }, Fonts::serif (46.0f),
-                         juce::Justification::centredLeft, Colours::ivory);
-        drawTrackedText (g, description, { 0.0f, 70.0f, w, 20.0f }, Fonts::sans (14.0f),
-                         juce::Justification::centredLeft, highlighted ? Colours::ivory : juce::Colour (0xffece4f4));
+        const auto b = getLocalBounds().toFloat();
+        const auto nameFont = Fonts::sans (12.0f, false, 0.2f);
+        const auto shownName = name.toUpperCase();
+        drawTrackedText (g, shownName, b, nameFont, juce::Justification::centredLeft, highlighted ? Colours::ivory : Colours::text);
+        const float x = trackedTextWidth (shownName, nameFont) + 2.0f;
+        drawTrackedText (g, kDot + description + kDot + length, b.withTrimmedLeft (x), Fonts::sans (12.0f, false, 0.04f),
+                         juce::Justification::centredLeft, highlighted ? Colours::ivory : Colours::soft);
     }
 
 private:
     juce::String length, name, description;
-    bool compact = false;
 };
 
 //==============================================================================
 SingPanel::SingPanel (SingProcessor& p)
     : processor (p), presets (p.getPresets()), presetName (std::make_unique<PresetName>()),
-      voiceInfo (std::make_unique<VoiceInfo>()), waveform (p.getState()), advanced (p.getState()),
+      voiceInfo (std::make_unique<VoiceInfo>()), waveform (p.getState()), modules (p.getState()),
       starButton (std::make_unique<StarButton>())
 {
     setOpaque (true);
@@ -258,9 +242,7 @@ SingPanel::SingPanel (SingProcessor& p)
             bloomEngine = juce::roundToInt (value) == 1;
             for (int i = 0; i < 2; ++i)
                 engineButtons[(size_t) i]->setToggleState (i == (bloomEngine ? 1 : 0), juce::dontSendNotification);
-            advancedButton.setVisible (bloomEngine);
-            if (! bloomEngine && advancedOpen)
-                setAdvancedOpen (false);
+            modules.setBloomEngine (bloomEngine);
             if (! motion)
                 bloomMix = bloomEngine ? 1.0f : 0.0f;
             repaint();
@@ -275,12 +257,7 @@ SingPanel::SingPanel (SingProcessor& p)
     outputDragger.formatValue = [] (double v) { return formatDecibels (static_cast<float> (v)); };
     for (auto [d, id] : { std::pair { &voicesDragger, ParamID::voices }, std::pair { &glideDragger, ParamID::glide }, std::pair { &outputDragger, ParamID::output } })
         d->setDoubleClickReturnValue (true, defaultValueOf (state, id));
-    // Bloom's Advanced section and the button that opens it (shown only in Bloom).
-    addChildComponent (advanced);
-    addChildComponent (advancedButton);
-    advancedButton.setClickingTogglesState (false);
-    advancedButton.setTooltip ("Bloom's modules: Window, Onsets, Shift, Smear, Tone, Harmonics and Filter");
-    advancedButton.onClick = [this] { setAdvancedOpen (! advancedOpen); };
+    addAndMakeVisible (modules);
     voicesDragger.setTooltip ("How many notes can sound at once");
     glideDragger.setTooltip ("Each new note slides from the last one");
 
@@ -309,23 +286,6 @@ SingPanel::SingPanel (SingProcessor& p)
 
 SingPanel::~SingPanel() = default;
 
-void SingPanel::setAdvancedOpen (bool open)
-{
-    advancedOpen = open && bloomEngine;
-    advancedButton.setToggleState (advancedOpen, juce::dontSendNotification);
-    advanced.setVisible (advancedOpen);
-    // Advanced covers the waveform, the loop row and the knobs; the voice shrinks to one line.
-    for (auto* c : std::initializer_list<juce::Component*> { &waveform, &dropButton, &loopStart, &loopLength, &loopFade })
-        c->setVisible (! advancedOpen);
-    for (auto& b : directionButtons)
-        b->setVisible (! advancedOpen);
-    for (auto& k : knobs)
-        k.setVisible (! advancedOpen);
-    voiceInfo->setCompact (advancedOpen);
-    resized();
-    repaint();
-}
-
 juce::String SingPanel::formatLoopSeconds (double percent) const
 {
     const auto v = processor.getVoice();
@@ -346,7 +306,7 @@ void SingPanel::setBypassed (bool shouldBypass)
     const float alpha = bypassed ? 0.45f : 1.0f;
     for (auto* c : std::initializer_list<juce::Component*> { voiceInfo.get(), &waveform, &loopStart, &loopLength, &loopFade,
                                                              &holdButton, &keepVowelButton, &voicesDragger, &glideDragger, &outputDragger,
-                                                             &advancedButton, &advanced })
+                                                             &modules })
         c->setAlpha (alpha);
     for (auto& b : directionButtons)
         b->setAlpha (alpha);
@@ -593,8 +553,7 @@ void SingPanel::frame (double seconds, bool animate)
         if (f.note >= 0)
             level = std::max (level, f.level);
     bloomSky.setActivity (level);
-    if (advancedOpen)
-        advanced.frame (seconds, animate, level);
+    modules.frame (seconds, animate, level);
 
     const auto now = nowSeconds();
     if (now - lastPresetCheck > 0.2)
@@ -609,70 +568,73 @@ void SingPanel::frame (double seconds, bool animate)
 
 void SingPanel::resized()
 {
-    // Header, from the mockup: preset box at 372,22; A / B and Save end 186 from the right.
-    presetFrame = { 372.0f, 22.0f, 296.0f, 46.0f };
-    previous.setBounds (378, 27, 44, 36);
-    next.setBounds (618, 27, 44, 36);
-    presetName->setBounds (422, 27, 196, 36);
+    constexpr float W = ui::panelWidth, left = 40.0f, right = W - 40.0f, inner = right - left;
+
+    // Header: the preset box in the middle, A / B and Save to its right, the star at the end.
+    presetFrame = { (W - 296.0f) * 0.5f, 22.0f, 296.0f, 46.0f };
+    const int px = juce::roundToInt (presetFrame.getX());
+    previous.setBounds (px + 6, 27, 44, 36);
+    next.setBounds (px + 246, 27, 44, 36);
+    presetName->setBounds (px + 50, 27, 196, 36);
 
     auto buttonWidth = [] (const juce::String& t) { return 32.0f + trackedTextWidth (t, Fonts::sans (12.0f, false, 0.18f)) + 2.0f; };
-    const float right = 1040.0f - 186.0f;
     const float saveW = buttonWidth ("SAVE"), abW = buttonWidth ("A / B");
-    saveButton.setBounds (juce::Rectangle<float> (right - saveW, 24.0f, saveW, 40.0f).toNearestInt());
-    abButton.setBounds (juce::Rectangle<float> (right - saveW - 8.0f - abW, 24.0f, abW, 40.0f).toNearestInt());
+    const float abX = presetFrame.getRight() + 40.0f;
+    abButton.setBounds (juce::Rectangle<float> (abX, 24.0f, abW, 40.0f).toNearestInt());
+    saveButton.setBounds (juce::Rectangle<float> (abX + abW + 8.0f, 24.0f, saveW, 40.0f).toNearestInt());
 
-    // The voice.
-    if (advancedOpen)
-        voiceInfo->setBounds (40, 88, 760, 46);
-    else
-        voiceInfo->setBounds (40, 96, 500, 92);
-    advanced.setBounds (40, 146, 960, juce::roundToInt (AdvancedPanel::headingHeight + 10.0f + 2.0f * ModuleTile::height + 12.0f));
-    dropButton.setBounds (juce::Rectangle<float> (560.0f, 150.0f, dropButton.preferredWidth(), 40.0f).toNearestInt());
-    waveform.setBounds (juce::Rectangle<float> (40.0f - WaveformView::margin, 206.0f - WaveformView::top,
+    // The voice: a small caption and the drop button, then the waveform across the panel.
+    const float dropW = dropButton.preferredWidth();
+    voiceInfo->setBounds (juce::Rectangle<float> (left, 80.0f, inner - dropW - 24.0f, 24.0f).toNearestInt());
+    dropButton.setBounds (juce::Rectangle<float> (right - dropW, 77.0f, dropW, 30.0f).toNearestInt());
+    waveform.setBounds (juce::Rectangle<float> (left - WaveformView::margin, 114.0f - WaveformView::top,
                                                 WaveformView::width, WaveformView::height).toNearestInt());
 
-    // Loop row at y = 326: LOOP and the direction pills on the left, Start/Length/Fade on the right.
+    // Loop row: LOOP and the direction pills on the left, Start/Length/Fade on the right.
+    const float loopY = 240.0f;
     const float loopLabelW = trackedTextWidth ("LOOP", Fonts::sans (12.0f, false, 0.24f)) + 6.0f;
-    float x = 40.0f + loopLabelW + 10.0f;
+    float x = left + loopLabelW + 10.0f;
     for (auto& b : directionButtons)
     {
         const float w = b->preferredWidth();
-        b->setBounds (juce::Rectangle<float> (x, 326.0f, w, 36.0f).toNearestInt());
+        b->setBounds (juce::Rectangle<float> (x, loopY, w, 36.0f).toNearestInt());
         x += w + 6.0f;
     }
-    float rx = 1000.0f;
+    float rx = right;
     for (auto [d, widest] : { std::pair { &loopFade, juce::String ("100%") }, std::pair { &loopLength, juce::String ("60.00 s") },
                               std::pair { &loopStart, juce::String ("60.00 s") } })
     {
         const float w = d->preferredWidth (widest);
-        d->setBounds (juce::Rectangle<float> (rx - w, 326.0f, w, 36.0f).toNearestInt());
+        d->setBounds (juce::Rectangle<float> (rx - w, loopY, w, 36.0f).toNearestInt());
         rx -= w + 28.0f;
     }
 
-    // Knobs: seven across the 960-wide row, dials starting at y = 378.
-    const float knobW = (960.0f - 6.0f * 8.0f) / static_cast<float> (numKnobs);
+    // Knobs: seven across, dials starting at y = 290.
+    const float knobW = (inner - 6.0f * 8.0f) / static_cast<float> (numKnobs);
     for (int i = 0; i < numKnobs; ++i)
         knobs[static_cast<size_t> (i)].setBounds (
-            juce::Rectangle<float> (40.0f + static_cast<float> (i) * (knobW + 8.0f), 378.0f - Knob::topMargin, knobW, Knob::height).toNearestInt());
+            juce::Rectangle<float> (left + static_cast<float> (i) * (knobW + 8.0f), 290.0f - Knob::topMargin, knobW, Knob::height).toNearestInt());
+
+    // Every module, in two rows.
+    modules.setBounds (juce::Rectangle<float> (left, 430.0f, inner, ModulesPanel::preferredHeight()).toNearestInt());
 
     // Bottom row.
-    holdButton.setBounds (juce::Rectangle<float> (40.0f, 556.0f, holdButton.preferredWidth(), 40.0f).toNearestInt());
-    float ex = 40.0f + holdButton.preferredWidth() + 22.0f;
+    const float bottomY = 866.0f;
+    holdButton.setBounds (juce::Rectangle<float> (left, bottomY, holdButton.preferredWidth(), 40.0f).toNearestInt());
+    float ex = left + holdButton.preferredWidth() + 22.0f;
     for (auto& b : engineButtons)
     {
         const float w = b->preferredWidth();
-        b->setBounds (juce::Rectangle<float> (ex, 556.0f, w, 40.0f).toNearestInt());
+        b->setBounds (juce::Rectangle<float> (ex, bottomY, w, 40.0f).toNearestInt());
         ex += w + 6.0f;
     }
-    keepVowelButton.setBounds (juce::Rectangle<float> (ex + 16.0f, 556.0f, keepVowelButton.preferredWidth(), 40.0f).toNearestInt());
-    ex += 16.0f + keepVowelButton.preferredWidth() + 6.0f;
-    advancedButton.setBounds (juce::Rectangle<float> (ex, 556.0f, advancedButton.preferredWidth(), 40.0f).toNearestInt());
-    rx = 1000.0f;
+    keepVowelButton.setBounds (juce::Rectangle<float> (ex + 16.0f, bottomY, keepVowelButton.preferredWidth(), 40.0f).toNearestInt());
+    rx = right;
     for (auto [d, widest] : { std::pair { &outputDragger, juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92" "36.0 dB")) }, std::pair { &glideDragger, juce::String ("2.0 s") },
                               std::pair { &voicesDragger, juce::String ("16") } })
     {
         const float w = d->preferredWidth (widest);
-        d->setBounds (juce::Rectangle<float> (rx - w, 562.0f, w, 28.0f).toNearestInt());
+        d->setBounds (juce::Rectangle<float> (rx - w, bottomY + 6.0f, w, 28.0f).toNearestInt());
         rx -= w + 26.0f;
     }
 
@@ -707,8 +669,7 @@ void SingPanel::paint (juce::Graphics& g)
 
     // LOOP caption.
     g.setOpacity (bypassed ? 0.45f : 1.0f);
-    if (! advancedOpen)
-        drawTrackedText (g, "LOOP", { 40.0f, 326.0f, 80.0f, 36.0f }, Fonts::sans (12.0f, false, 0.24f),
+    drawTrackedText (g, "LOOP", { 40.0f, 240.0f, 80.0f, 36.0f }, Fonts::sans (12.0f, false, 0.24f),
                      juce::Justification::centredLeft, Colours::soft.withMultipliedAlpha (bypassed ? 0.45f : 1.0f));
 
     // Hold's glow, like a CSS box-shadow under the lit pill, and the lit engine's.
@@ -716,8 +677,6 @@ void SingPanel::paint (juce::Graphics& g)
         drawGlow (g, holdButton.getBounds().toFloat(), 20.0f, 16.0f, Colours::gold.withAlpha (0.5f));
     if (keepVowelButton.getToggleState())
         drawGlow (g, keepVowelButton.getBounds().toFloat(), 20.0f, 12.0f, Colours::gold.withAlpha (0.3f));
-    if (advancedOpen)
-        drawGlow (g, advancedButton.getBounds().toFloat(), 20.0f, 12.0f, Colours::gold.withAlpha (0.3f));
     for (auto& b : engineButtons)
         if (b->getToggleState())
             drawGlow (g, b->getBounds().toFloat(), 20.0f, 12.0f, Colours::gold.withAlpha (0.3f));
@@ -725,8 +684,8 @@ void SingPanel::paint (juce::Graphics& g)
     if (bypassed)
     {
         const auto star = BlueHourSky::starCentre();
-        drawTrackedText (g, "BYPASSED", { star.x - 65.0f, 158.0f, 130.0f, 16.0f }, Fonts::sans (11.0f, false, 0.28f),
-                         juce::Justification::centred, Colours::soft);
+        drawTrackedText (g, "BYPASSED", { star.x - 190.0f, star.y - 8.0f, 150.0f, 16.0f }, Fonts::sans (11.0f, false, 0.28f),
+                         juce::Justification::centredRight, Colours::soft);
     }
 }
 
@@ -736,13 +695,13 @@ SingEditor::SingEditor (SingProcessor& p)
       vblank (this, [this] (double t) { onFrame (t); })
 {
     // Read the saved size first: setting the limits below calls resized(), which stores a new one.
-    const float scale = juce::jlimit (0.7f, 1.5f, processor.getUiScale());
+    const float scale = juce::jlimit (0.6f, 1.4f, processor.getUiScale());
 
     setLookAndFeel (&lookAndFeel);
     addAndMakeVisible (panel);
 
     setResizable (true, true);
-    setResizeLimits (kPanelWidth * 7 / 10, kPanelHeight * 7 / 10, kPanelWidth * 3 / 2, kPanelHeight * 3 / 2);
+    setResizeLimits (kPanelWidth * 6 / 10, kPanelHeight * 6 / 10, kPanelWidth * 7 / 5, kPanelHeight * 7 / 5);
     if (auto* c = getConstrainer())
         c->setFixedAspectRatio (static_cast<double> (kPanelWidth) / kPanelHeight);
 

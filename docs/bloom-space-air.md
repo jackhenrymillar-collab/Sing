@@ -19,8 +19,9 @@ voice into a glow. Sing adds what a playable vocal pad needs on top.
 
 When Bloom is selected, every loop is analysed as it is built (on the loop builder thread):
 
-- **Frames:** Hann windows of about 0.68 s (32768 samples at 48 kHz; see Window below), every
-  eighth of a window.
+- **Frames:** windows of about 0.68 s (32768 samples at 48 kHz; see Window below, up to
+  40 s), every eighth of a window. Classic Bloom analyses with a Hamming window, locked
+  harmonics with Hann.
   Shorter loops get shorter windows, so a window never holds the loop twice. The windows read
   round the loop, so the seam is already blended.
 - **Envelope:** the vowel's shape, drawn through the tops of the harmonics (a running maximum
@@ -43,8 +44,10 @@ A 2 s loop takes about 25 ms to analyse.
 
 ### Playing (`BloomVoice`)
 
-Each note builds a new frame every quarter window (about 0.17 s) and overlap-adds it with a
-Hann window:
+Each note builds a new frame every half window (about 0.34 s) and overlap-adds it with an
+even-power window: Hann reshaped so the squares of two overlapping windows always sum to one,
+which keeps random-phase frames at a steady level with only two in play. Locked harmonics use
+a quarter-window hop and plain Hann. Each frame:
 
 1. For each Spread copy, read the analysis at the copy's position. The whole spectrum (the
    fine structure) moves with the pitch; the **envelope** moves with Formant only, so the
@@ -74,9 +77,15 @@ on quieter or louder parts of the envelope, and each one's peak widens by the ra
 `harmonicsGain` compares the envelope at the harmonics as recorded and as played, and makes up
 the difference.
 
-**Starting a note.** The first frame takes about 85 ms to build (paced so a chord can start
-at once). It then starts a hop into its window, with make-up gain while the overlap fills, so
-the note sounds straight away at close to full level.
+**Starting a note.** The first frame takes about 70 ms to build at the default window (paced
+so a chord can start at once), about 0.5 s at a 10 s window and about 2.5 s at 40 s. It then
+starts partway up its window, with make-up gain while the overlap fills, so the note sounds
+at close to full level from the start.
+
+**Memory.** Each loop's analysis makes the per-note buffers for its own window when it is built
+(off the audio thread): as many as the voice count, within 640 MB in all. A 40 s window at
+48 kHz gets 7, so at most 7 notes at that window play Bloom at once; more fall back to
+granular.
 
 **CPU.** The work for each frame is cut into about a hundred small steps (a slice of bins, or
 one stage of an FFT), spread evenly over the hop. Each note starts its steps at its own point
@@ -88,23 +97,26 @@ blocks):
 | Spread 0 | 8 % of a core | about 1.4 ms |
 | Spread 1 | 22 % of a core | about 2.3 ms |
 
-### Advanced: the spectral modules
+### The modules
 
-In Bloom the bottom row shows an ADVANCED button. It opens a panel over the waveform, loop row
-and knobs: one square per module, in the order the sound passes through them, each with an
-on/off light (Window is always on), its controls, and a small moving picture of what it does
-(drawn from the module's settings, and livelier while notes sound). An eighth square draws the
-combined result. Granular ignores all of them.
+Every module sits on the main panel under the knobs, two rows of tiles, each with an on/off
+light (Window is always on), its controls, and a small moving picture of what it does (drawn
+from the module's settings, and livelier while notes sound). Most shape Bloom only and dim
+while Grain plays; Binaural and Space filter work in both engines.
 
 | Module | Parameters | Range | What it does |
 | --- | --- | --- | --- |
-| Window | `window` | 0.1 to 1.4 s (default 0.68 s) | The analysis and synthesis window, rounded to a power of two samples and never longer than 98% of the loop. Near that limit Stretch becomes very subtle, because every frame holds most of the loop. Longer is smoother and slower to change. Changing it rebuilds the analysis; notes already sounding keep their window. |
+| Window | `window` | 0.1 to 40 s (default 0.68 s) | The analysis and synthesis window, rounded to a power of two samples and never longer than 98% of the loop. Near that limit Stretch becomes very subtle, because every frame holds most of the loop. Longer is smoother and slower to change, and slower to start (see Starting a note). Changing it rebuilds the analysis; notes already sounding keep their window. |
 | Onsets | `onsetson`, `onsets` | 0 to 100 % | How strongly an onset pulls the read position to the recorded speed (step 5 above). |
 | Shift | `shifton`, `shift` | -500 to +500 Hz | Frequency shift: every partial moves by the same number of Hz, so harmonics become inharmonic (bell-like). The vowel envelope stays put. |
-| Smear | `smearon`, `smear` | 0 to 100 % | Frequency spread: each bin reads from a random point up to 12 % (about two semitones) away, a new one every frame, so the spectrum blurs. |
+| Smear | `smearon`, `smear` | 0 to 100 % | Blurs each bin's power over its neighbours across a constant share of an octave (the width grows with the square of the amount), so harmonics melt into a wash. The level stays within 1 dB. With locked harmonics it keeps the older random-offset smear. |
 | Tone | `toneon`, `tone` | Breath 100 to Pure 100 | Tonal against noise: down fades out the harmonics (found as in the analysis) and keeps the breath and noise; up does the opposite. |
 | Harmonics | `harmonicson`, `harmonicswidth`, `harmonicscount` | 1 to 200 cents, 1 to 64 | Keeps only what lies near the harmonics of the key being played (the voice's root times the note's pitch ratio, so each Spread copy gets its own comb), up to Count. Each harmonic passes a Gaussian of half-width Width (never narrower than about a bin, so short windows still catch the low harmonics). Breath and noise become a tuned chord. The comb's power loss is made up per frame (up to 24 dB, eased frame to frame), so switching it on keeps the level even on a voice whose pitch wanders off the key. |
-| Filter | `filteron`, `filterlow`, `filterhigh` | 20 Hz to 20 kHz | Keeps Low to High, with a raised-cosine slope a twelfth of an octave either side of each edge. With Low above High it cuts that band out instead. No make-up: cutting is the point. |
+| Filter | `filteron`, `filterlow`, `filterhigh`, `filterslope` | 20 Hz to 20 kHz; Sharp, 6 dB, 12 dB | Keeps Low to High. Sharp is a raised-cosine edge a twelfth of an octave wide; 6 dB and 12 dB are gentle Butterworth-shaped slopes of that many dB per octave. With Low above High it cuts that band out instead. No make-up: cutting is the point. |
+| Compressor | `compressoron`, `compressor` | 0 to 100 % (default 50 %) | Evens out the loud and quiet moments: each frame is turned towards the loop's typical frame level (the geometric mean of the frames' power), more strongly the higher the amount, with the gain limited both ways. A 12 dB swing in the test voice comes out at 0.2 dB at 100 %. |
+| Octaves | `octaveson`, `octm2`, `octm1`, `oct0`, `octp1`, `octp15`, `octp2` | 0 to 100 % each | Mixes the spectrum with copies two and one octave down, an octave, an octave and a fifth, and two octaves up. The levels are power weights, normalised so the total level holds. Root starts at 100 %. |
+| Binaural | `binauralon`, `binauralrate`, `binauralamount` | 0.1 to 30 Hz, 0 to 100 % | Shifts the left channel up and the right down by half the rate (single-sideband, via two IIR all-pass Hilbert pairs), so the ears hear a beat at the rate. Runs on the whole instrument before Air and Space, in both engines. Best on headphones. |
+| Space filter | `spacefilteron`, `spacelow`, `spacehigh` | 20 Hz to 2 kHz, 1 to 20 kHz | A 12 dB per octave low and high cut on the reverb's wet signal only; the dry voice is untouched. Both engines. |
 
 The older modules' switches start on and the new ones start off, so older sessions and
 presets sound as they did. RESET ALL puts every module back to its default.
@@ -153,9 +165,14 @@ turned down to 0 the wet fades out over about half a second, then the reverb sto
 Measured decay at 0.25, 0.5 and 1: 4.5 s, 7.8 s and 20 s. Air and Space together use about 5 %
 of a core.
 
-The signal runs synth, then Air, then Space, then Output.
+The signal runs synth, then Binaural, then Air, then Space, then Output.
 
 ## The panel
+
+The panel is laid out at 1280 x 920 units and scales from 60 % to 140 %. From the top: the
+header (logo, preset, A / B, Save, and the evening star, which is bypass), a small line with the
+voice's name, root and length beside DROP A VOICE, the waveform across the whole width, the loop
+row, the seven knobs, the module tiles (above), and the bottom row.
 
 With Bloom selected, the blue hour fades over about a second into the Bloom sky
 (`UI/BloomSky`): a dark night with drifting colour haze, a huge faint flower turning behind

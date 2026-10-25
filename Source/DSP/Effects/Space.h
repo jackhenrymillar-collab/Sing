@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Effects/Aurora.h"
+#include "Effects/Biquad.h"
 
 namespace sing
 {
@@ -17,6 +18,8 @@ namespace sing
 //
 // The reverb hears the voice through a low cut (150 Hz), so a long tail stays clear
 // instead of booming. Its modulation and diffusion are fixed at Overcast's pad settings.
+// Its own filter (setFilter) can cut lows and highs from the wet sound alone, 12 dB per
+// octave each; the dry voice is untouched.
 //
 // Threading: prepare() allocates. process() is real-time safe. When Space is turned down
 // to 0, the wet fades out, and once it is silent the reverb stops running (and costs
@@ -28,6 +31,9 @@ public:
     void reset();
 
     void setAmount (float amount) noexcept;   // the Space knob, 0 to 1
+    // The wet sound's low and high cuts. Off, they open right out. Changes glide over about
+    // 50 ms, so moving them never clicks.
+    void setFilter (bool on, float lowHz, float highHz) noexcept;
 
     // In place, stereo.
     void process (float* left, float* right, int numSamples) noexcept;
@@ -51,6 +57,9 @@ private:
     std::vector<float> sendL, sendR, wetL, wetR;
     float amount = 0.0f;
     bool running = false;
+    Biquad wetLowL, wetLowR, wetHighL, wetHighR;
+    float lowTarget = 10.0f, highTarget = 22000.0f, lowNow = 10.0f, highNow = 22000.0f;
+    void updateFilter (int samples) noexcept;
     int silentSamples = 0;
 };
 

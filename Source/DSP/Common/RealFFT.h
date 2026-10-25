@@ -46,9 +46,17 @@ public:
     int inverseStepCount() const noexcept { return 1 + stages; }
     void inverseStep (int step, const float* spectrum, float* work) const noexcept;
 
+    // The same inverse in finer pieces, for long frames: each step above is cut into
+    // `chunks` pieces (a power of two, at most N / 8), run in order. A piece of a stage is a
+    // share of its butterflies, so every piece costs about the same.
+    int inverseChunkCount (int chunks) const noexcept { return (2 + stages) * chunks; }
+    void inverseChunk (int unit, int chunks, const float* spectrum, float* work) const noexcept;
+
 private:
     void bitReverse (float* z) const noexcept;
     void stage (float* z, int s, bool inverse) const noexcept;
+    void stagePart (float* z, int s, bool inverse, int from, int to, float scale) const noexcept;
+    void unpack (const float* spectrum, float* work, int from, int to) const noexcept;
     void complexFFT (float* z, bool inverse) const noexcept;
 
     int n = 0, m = 0, stages = 0;          // m = n / 2 complex points

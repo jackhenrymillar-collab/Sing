@@ -42,10 +42,15 @@ struct LoopSettings
     // phases running from frame to frame instead, so a held vowel trembles less.
     bool bloomLockHarmonics = false;
 
-    // Bloom's window length in seconds (the Window control), 0.1 to 1.4. Longer is smoother
+    // Bloom's window length in seconds (the Window control), 0.1 to 40. Longer is smoother
     // and slower to change; shorter keeps more of the voice's movement. Rounded to a power
-    // of two samples, and never longer than the loop.
+    // of two samples, and never longer than 98% of the loop.
     float bloomWindowSeconds = 0.68f;
+
+    // For Bloom's per-note buffers, made with the analysis: the host's sample rate (0: the
+    // voice's own) and how many notes may play Bloom at once. Long windows get fewer.
+    double hostSampleRate = 0.0;
+    int bloomNotes = 20;
 
     // The voice's pitch over time, when it has been measured. Voices that move between notes
     // need it: pitch-synchronous processing must follow the note actually sounding, not the

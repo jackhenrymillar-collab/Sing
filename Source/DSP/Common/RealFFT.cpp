@@ -6,6 +6,7 @@
 #include <cmath>
 #include <memory>
 #include <mutex>
+#include <utility>
 
 namespace sing
 {
@@ -13,7 +14,7 @@ namespace sing
 namespace
 {
 constexpr double twoPi = 6.283185307179586476925;
-constexpr int maxSharedOrder = 20;
+constexpr int maxSharedOrder = 23;   // up to 8M points: a 40 s window at 192 kHz
 
 std::array<std::atomic<const RealFFT*>, maxSharedOrder + 1>& sharedTable()
 {
@@ -104,26 +105,32 @@ void RealFFT::bitReverse (float* z) const noexcept
 
 void RealFFT::stage (float* z, int s, bool inverse) const noexcept
 {
-    // Stage s combines blocks of 2^s into blocks of 2^(s+1).
+    stagePart (z, s, inverse, 0, m / 2, 1.0f);
+}
+
+void RealFFT::stagePart (float* z, int s, bool inverse, int from, int to, float scale) const noexcept
+{
+    // Stage s combines blocks of 2^s into blocks of 2^(s+1): m / 2 butterflies, of which this
+    // runs from to to (butterfly t is pair j = t mod 2^s of block t / 2^s). scale multiplies
+    // both outputs of each butterfly (used for the inverse's 1 / m on its last stage).
     const int half = 1 << s;
     const int step = m / (2 * half);   // twiddle stride
     const float sign = inverse ? -1.0f : 1.0f;
 
-    for (int block = 0; block < m; block += 2 * half)
+    for (int t = from; t < to; ++t)
     {
-        for (int j = 0; j < half; ++j)
-        {
-            const float wr = twiddle[(size_t) (2 * j * step)];
-            const float wi = sign * twiddle[(size_t) (2 * j * step + 1)];
-            float* a = z + 2 * (block + j);
-            float* b = z + 2 * (block + j + half);
-            const float tr = b[0] * wr - b[1] * wi;
-            const float ti = b[0] * wi + b[1] * wr;
-            b[0] = a[0] - tr;
-            b[1] = a[1] - ti;
-            a[0] += tr;
-            a[1] += ti;
-        }
+        const int j = t & (half - 1);
+        const int block = (t >> s) << (s + 1);
+        const float wr = twiddle[(size_t) (2 * j * step)];
+        const float wi = sign * twiddle[(size_t) (2 * j * step + 1)];
+        float* a = z + 2 * (block + j);
+        float* b = z + 2 * (block + j + half);
+        const float tr = b[0] * wr - b[1] * wi;
+        const float ti = b[0] * wi + b[1] * wr;
+        b[0] = (a[0] - tr) * scale;
+        b[1] = (a[1] - ti) * scale;
+        a[0] = (a[0] + tr) * scale;
+        a[1] = (a[1] + ti) * scale;
     }
 }
 
@@ -176,51 +183,77 @@ void RealFFT::forward (const float* input, float* spectrum) noexcept
     spectrum[2 * m + 1] = 0.0f;
 }
 
+void RealFFT::unpack (const float* spectrum, float* work, int from, int to) const noexcept
+{
+    // Back to Z: E[k] = (X[k] + conj X[m-k]) / 2, O[k] = (X[k] - conj X[m-k]) / (2 W^k),
+    // Z[k] = E[k] + i O[k].
+    for (int k = from; k < to; ++k)
+    {
+        const float xr = spectrum[2 * k], xi = spectrum[2 * k + 1];
+        const float cr = spectrum[2 * (m - k)], ci = -spectrum[2 * (m - k) + 1];
+
+        const float er = 0.5f * (xr + cr), ei = 0.5f * (xi + ci);
+        const float dr = 0.5f * (xr - cr), di = 0.5f * (xi - ci);
+
+        // Divide by W^k: multiply by conj(W^k).
+        float wr, wi;
+        if (k <= m / 2)
+        {
+            wr = split[(size_t) (2 * k)];
+            wi = -split[(size_t) (2 * k + 1)];
+        }
+        else
+        {
+            // W^k for k > m/2: W^k = -conj(W^(m-k)), since W^m = -1.
+            wr = -split[(size_t) (2 * (m - k))];
+            wi = -split[(size_t) (2 * (m - k) + 1)];
+        }
+        const float orr = dr * wr - di * wi, oi = dr * wi + di * wr;
+
+        // Z = E + i O
+        work[2 * k] = er - oi;
+        work[2 * k + 1] = ei + orr;
+    }
+}
+
 void RealFFT::inverseStep (int step, const float* spectrum, float* work) const noexcept
 {
     if (step == 0)
     {
-        // Back to Z: E[k] = (X[k] + conj X[m-k]) / 2, O[k] = (X[k] - conj X[m-k]) / (2 W^k),
-        // Z[k] = E[k] + i O[k].
-        for (int k = 0; k < m; ++k)
-        {
-            const float xr = spectrum[2 * k], xi = spectrum[2 * k + 1];
-            const float cr = spectrum[2 * (m - k)], ci = -spectrum[2 * (m - k) + 1];
-
-            const float er = 0.5f * (xr + cr), ei = 0.5f * (xi + ci);
-            const float dr = 0.5f * (xr - cr), di = 0.5f * (xi - ci);
-
-            // Divide by W^k: multiply by conj(W^k).
-            float wr, wi;
-            if (k <= m / 2)
-            {
-                wr = split[(size_t) (2 * k)];
-                wi = -split[(size_t) (2 * k + 1)];
-            }
-            else
-            {
-                // W^k for k > m/2: W^k = -conj(W^(m-k)), since W^m = -1.
-                wr = -split[(size_t) (2 * (m - k))];
-                wi = -split[(size_t) (2 * (m - k) + 1)];
-            }
-            const float orr = dr * wr - di * wi, oi = dr * wi + di * wr;
-
-            // Z = E + i O
-            work[2 * k] = er - oi;
-            work[2 * k + 1] = ei + orr;
-        }
+        unpack (spectrum, work, 0, m);
         bitReverse (work);
         return;
     }
+    stagePart (work, step - 1, true, 0, m / 2, step == stages ? 1.0f / (float) m : 1.0f);
+}
 
-    stage (work, step - 1, true);
-
-    if (step == stages)
+void RealFFT::inverseChunk (int unit, int chunks, const float* spectrum, float* work) const noexcept
+{
+    const int step = unit / chunks, piece = unit % chunks;
+    if (step == 0)
     {
-        const float scale = 1.0f / (float) m;
-        for (int i = 0; i < n; ++i)
-            work[i] *= scale;
+        unpack (spectrum, work, m * piece / chunks, m * (piece + 1) / chunks);
+        return;
     }
+    if (step == 1)
+    {
+        // Bit reversal, a share of the indices at a time. Each pair is swapped once, by the
+        // piece holding its lower index.
+        for (int i = m * piece / chunks, end = m * (piece + 1) / chunks; i < end; ++i)
+        {
+            const int j = reversed[(size_t) i];
+            if (j > i)
+            {
+                std::swap (work[2 * i], work[2 * j]);
+                std::swap (work[2 * i + 1], work[2 * j + 1]);
+            }
+        }
+        return;
+    }
+    const int s = step - 2;
+    const int butterflies = m / 2;
+    stagePart (work, s, true, butterflies * piece / chunks, butterflies * (piece + 1) / chunks,
+               s == stages - 1 ? 1.0f / (float) m : 1.0f);
 }
 
 void RealFFT::inverse (const float* spectrum, float* output) noexcept

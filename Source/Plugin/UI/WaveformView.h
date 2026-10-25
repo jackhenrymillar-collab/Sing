@@ -20,7 +20,7 @@ namespace sing::ui
 class WaveformView final : public juce::Component
 {
 public:
-    static constexpr float margin = 8.0f, top = 20.0f, waveWidth = 960.0f, waveHeight = 100.0f;
+    static constexpr float margin = 8.0f, top = 20.0f, waveWidth = 1200.0f, waveHeight = 100.0f;
     static constexpr float width = waveWidth + 2.0f * margin, height = waveHeight + 40.0f;
 
     explicit WaveformView (juce::AudioProcessorValueTreeState&);
