@@ -71,7 +71,10 @@ Each note has:
 - **Attack**: linear, 0 to 20 s.
 - **Release**: exponential, reaching -60 dB at the Release time (0 to 30 s).
 - **Velocity**: gain 0.35 + 0.65 x velocity, so soft notes are quieter but never vanish.
-- **Glide**: with Glide above 0, a new note slides from the last note's pitch.
+- **Glide**: with Glide above 0, a new note slides from the last note's pitch. Bloom bakes the
+  pitch into each long frame, so a Bloom note (Formant mode) builds its frames at its key and
+  glides and bends as a smooth varispeed on its output instead, with the envelope moved back so
+  the vowel holds.
 - **Hold**: freezes the grains where they are (see the Stretch doc).
 
 The loop moves from the message thread to the audio thread through `SourceExchange`, a

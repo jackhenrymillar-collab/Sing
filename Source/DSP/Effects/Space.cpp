@@ -57,12 +57,20 @@ void Space::prepare (double sampleRate, int maxBlockSize)
     sendR.assign (n, 0.0f);
     wetL.assign (n, 0.0f);
     wetR.assign (n, 0.0f);
+    shimmer.prepare (rate);
+    tailL.prepare ((std::size_t) shimmerChunk + 4);
+    tailR.prepare ((std::size_t) shimmerChunk + 4);
+    for (auto* b : { &loopL, &loopR, &shimL, &shimR })
+        b->assign ((size_t) shimmerChunk, 0.0f);
     reset();
 }
 
 void Space::reset()
 {
     aurora.reset();
+    shimmer.reset();
+    tailL.reset();
+    tailR.reset();
     preDelayL.reset();
     preDelayR.reset();
     lowL.reset();
@@ -111,9 +119,17 @@ void Space::setLevel (float l) noexcept
         aurora.reset();
         preDelayL.reset();
         preDelayR.reset();
+        shimmer.reset();
+        tailL.reset();
+        tailR.reset();
         running = true;
         silentSamples = 0;
     }
+}
+
+void Space::setShimmer (bool on, float amount, float rise, int interval) noexcept
+{
+    shimmer.set (on, amount, rise, interval);
 }
 
 void Space::setDecay (float seconds) noexcept
@@ -122,6 +138,7 @@ void Space::setDecay (float seconds) noexcept
     if (seconds == decaySeconds)
         return;
     decaySeconds = seconds;
+    shimmer.setDecay (seconds);
     updateReverb();
 }
 
@@ -153,7 +170,9 @@ void Space::process (float* left, float* right, int numSamples) noexcept
     int done = 0;
     while (done < numSamples)
     {
-        const int n = std::min (numSamples - done, (int) sendL.size());
+        // With Shimmer, short steps: the tail it sends round is one step old.
+        const bool shimmering = shimmer.isActive();
+        const int n = std::min (numSamples - done, shimmering ? shimmerChunk : (int) sendL.size());
         float* l = left + done;
         float* r = right + done;
 
@@ -167,7 +186,28 @@ void Space::process (float* left, float* right, int numSamples) noexcept
             sendR[(size_t) i] = preDelayR.readFractional (d);
         }
 
+        if (shimmering)
+        {
+            // The tail from shimmerChunk samples back, so it is always there already.
+            for (int i = 0; i < n; ++i)
+            {
+                loopL[(size_t) i] = tailL.read ((std::size_t) (shimmerChunk - i));
+                loopR[(size_t) i] = tailR.read ((std::size_t) (shimmerChunk - i));
+            }
+            shimmer.process (sendL.data(), sendR.data(), loopL.data(), loopR.data(), shimL.data(), shimR.data(), n);
+            for (int i = 0; i < n; ++i)
+            {
+                sendL[(size_t) i] += shimL[(size_t) i];
+                sendR[(size_t) i] += shimR[(size_t) i];
+            }
+        }
+
         aurora.process (sendL.data(), sendR.data(), wetL.data(), wetR.data(), n);
+        for (int i = 0; i < n; ++i)
+        {
+            tailL.push (shimmering ? wetL[(size_t) i] : 0.0f);
+            tailR.push (shimmering ? wetR[(size_t) i] : 0.0f);
+        }
         updateFilter (n);
         for (int i = 0; i < n; ++i)
         {

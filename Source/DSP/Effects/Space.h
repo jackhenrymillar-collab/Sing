@@ -2,6 +2,7 @@
 
 #include "Effects/Aurora.h"
 #include "Effects/Biquad.h"
+#include "Effects/Shimmer.h"
 
 namespace sing
 {
@@ -24,6 +25,9 @@ namespace sing
 // Its own filter (setFilter) can cut lows and highs from the wet sound alone, 12 dB per
 // octave each; the dry voice is untouched.
 //
+// Shimmer (setShimmer) feeds a pitched-up copy of the send, and of the reverb's own tail,
+// back into the reverb, so held notes grow a halo above them; see Shimmer.
+//
 // Threading: prepare() allocates. process() is real-time safe. When Level is turned down
 // to 0, the wet fades out, and once it is silent the reverb stops running (and costs
 // nothing) until Level comes back up.
@@ -39,6 +43,8 @@ public:
     // The wet sound's low and high cuts. Off, they open right out. Changes glide over about
     // 50 ms, so moving them never clicks.
     void setFilter (bool on, float lowHz, float highHz) noexcept;
+    // Shimmer: amount and rise 0 to 1; interval 0 an octave up, 1 a fifth up.
+    void setShimmer (bool on, float amount, float rise, int interval) noexcept;
 
     // In place, stereo.
     void process (float* left, float* right, int numSamples) noexcept;
@@ -78,6 +84,10 @@ private:
     float lowTarget = 10.0f, highTarget = 22000.0f, lowNow = 10.0f, highNow = 22000.0f;
     void updateFilter (int samples) noexcept;
     int silentSamples = 0;
+    Shimmer shimmer;
+    reverb::DelayLine tailL, tailR;   // the reverb's output, for Shimmer to go round again
+    std::vector<float> loopL, loopR, shimL, shimR;
+    static constexpr int shimmerChunk = 256;
 };
 
 } // namespace sing

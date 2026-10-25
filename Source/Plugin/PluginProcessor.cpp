@@ -62,6 +62,15 @@ SingProcessor::SingProcessor()
     binauralOn = state.getRawParameterValue (ParamID::binauralOn);
     binauralRate = state.getRawParameterValue (ParamID::binauralRate);
     binauralAmount = state.getRawParameterValue (ParamID::binauralAmount);
+    tapeOn = state.getRawParameterValue (ParamID::tapeOn);
+    tapeWow = state.getRawParameterValue (ParamID::tapeWow);
+    tapeFlutter = state.getRawParameterValue (ParamID::tapeFlutter);
+    tapeDrive = state.getRawParameterValue (ParamID::tapeDrive);
+    tapeAge = state.getRawParameterValue (ParamID::tapeAge);
+    shimmerOn = state.getRawParameterValue (ParamID::shimmerOn);
+    shimmerAmount = state.getRawParameterValue (ParamID::shimmerAmount);
+    shimmerRise = state.getRawParameterValue (ParamID::shimmerRise);
+    shimmerInterval = state.getRawParameterValue (ParamID::shimmerInterval);
     spaceFilterOn = state.getRawParameterValue (ParamID::spaceFilterOn);
     spaceLow = state.getRawParameterValue (ParamID::spaceLow);
     spaceHigh = state.getRawParameterValue (ParamID::spaceHigh);
@@ -245,6 +254,18 @@ bool SingProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
     return out == juce::AudioChannelSet::stereo() || out == juce::AudioChannelSet::mono();
 }
 
+void SingProcessor::setTape() noexcept
+{
+    tape.set (tapeOn->load() > 0.5f, tapeWow->load() * 0.01f, tapeFlutter->load() * 0.01f,
+              tapeDrive->load() * 0.01f, tapeAge->load() * 0.01f);
+}
+
+void SingProcessor::setShimmer() noexcept
+{
+    space.setShimmer (shimmerOn->load() > 0.5f, shimmerAmount->load() * 0.01f, shimmerRise->load() * 0.01f,
+                      juce::roundToInt (shimmerInterval->load()));
+}
+
 void SingProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     // Bloom's note buffers depend on the host rate: rebuild the loop for a new one.
@@ -258,7 +279,11 @@ void SingProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     binaural.prepare (sampleRate);
     binaural.set (binauralOn->load() > 0.5f, binauralRate->load(), binauralAmount->load() * 0.01f);
     binaural.reset();
+    tape.prepare (sampleRate);
+    setTape();
+    tape.reset();
     space.prepare (sampleRate, juce::jmax (512, samplesPerBlock));
+    setShimmer();
     space.setFilter (spaceFilterOn->load() > 0.5f, spaceLow->load(), spaceHigh->load());
     space.setDecay (spaceDecay->load());
     space.setSize (spaceSize->load() * 0.01f);
@@ -405,6 +430,7 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         space.reset();
         air.reset();
         binaural.reset();
+        tape.reset();
     }
 
     // Pick up a rebuilt loop, and hand back any old one no note uses any more.
@@ -467,10 +493,14 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         {
             air.reset();
             space.reset();
+            tape.reset();
         }
     }
 
-    // Binaural beats, then Air, then Space: the reverb hears the lifted top and the breath.
+    // Tape, then Binaural beats, then Air, then Space: the reverb hears the worn voice, the
+    // lifted top and the breath.
+    setTape();
+    setShimmer();
     binaural.set (binauralOn->load() > 0.5f, binauralRate->load(), binauralAmount->load() * 0.01f);
 
     // Air and Space orbit here, after the notes, so every note shares their path.
@@ -512,6 +542,7 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     space.setSize (spaceSize->load() * 0.01f);
     if (right != nullptr)
     {
+        tape.process (left, right, numSamples);
         binaural.process (left, right, numSamples);
         air.process (left, right, numSamples);
         space.process (left, right, numSamples);
@@ -522,6 +553,7 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         {
             const int n = std::min (numSamples - pos, (int) monoRight.size());
             std::copy (left + pos, left + pos + n, monoRight.begin());
+            tape.process (left + pos, monoRight.data(), n);
             air.process (left + pos, monoRight.data(), n);
             space.process (left + pos, monoRight.data(), n);
             for (int i = 0; i < n; ++i)
