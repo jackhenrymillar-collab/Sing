@@ -271,8 +271,6 @@ SingPanel::SingPanel (SingProcessor& p)
             for (int i = 0; i < 2; ++i)
                 engineButtons[(size_t) i]->setToggleState (i == (bloomEngine ? 1 : 0), juce::dontSendNotification);
             modules.setBloomEngine (bloomEngine);
-            if (! motion)
-                bloomMix = bloomEngine ? 1.0f : 0.0f;
             repaint();
         });
     for (auto* d : { &voicesDragger, &glideDragger, &outputDragger })
@@ -349,7 +347,6 @@ SingPanel::SingPanel (SingProcessor& p)
     engineAttachment->sendInitialUpdate();
     shapeAttachment->sendInitialUpdate();
     syncAttachment->sendInitialUpdate();
-    bloomMix = bloomEngine ? 1.0f : 0.0f;
     bypassAttachment->sendInitialUpdate();
     updatePresetDisplay();
     updateVoiceDisplay();
@@ -397,7 +394,6 @@ void SingPanel::setBypassed (bool shouldBypass)
     starButton->setTitle (bypassed ? "Turn Sing on" : "Bypass Sing");
     starButton->setTooltip (bypassed ? "Click the evening star to turn Sing back on" : "Click the evening star to bypass");
     sky.setBypassed (bypassed);
-    bloomSky.setBypassed (bypassed);
 
     // Dim the controls while bypassed; they still work.
     const float alpha = bypassed ? 0.45f : 1.0f;
@@ -606,25 +602,21 @@ void SingPanel::filesDropped (const juce::StringArray& files, int, int)
 void SingPanel::frame (double seconds, bool animate)
 {
     motion = animate;
+    // The fireflies follow Space, Spread and Stretch, moving with their orbits.
+    {
+        const auto orbitsNow = processor.getOrbitPositions();
+        auto& state = processor.getState();
+        const auto knob = [&state, &orbitsNow] (const char* id, int target, float scale)
+        {
+            const float live = orbitsNow[(size_t) target];
+            return live >= 0.0f ? live : state.getRawParameterValue (id)->load() * scale;
+        };
+        sky.setKnobs (knob (ParamID::space, moveSpace, 0.01f), knob (ParamID::spread, moveSpread, 0.01f),
+                      knob (ParamID::stretch, moveStretch, 0.01f));
+    }
     sky.setMotion (animate);
     sky.advance (seconds);
-    bloomSky.setMotion (animate);
-    bloomSky.advance (seconds);
-
-    // Switching engine fades one sky into the other over about a second.
-    const float target = bloomEngine ? 1.0f : 0.0f;
-    const auto dt = static_cast<float> (lastFrameTime < 0.0 ? 0.0 : juce::jlimit (0.0, 0.1, seconds - lastFrameTime));
     lastFrameTime = seconds;
-    if (! animate)
-        bloomMix = target;
-    else if (std::abs (bloomMix - target) > 0.0f)
-    {
-        bloomMix += (target > bloomMix ? 1.0f : -1.0f) * dt;
-        bloomMix = juce::jlimit (0.0f, 1.0f, bloomMix);
-        if (std::abs (bloomMix - target) < 1.0e-3f)
-            bloomMix = target;
-        repaint();
-    }
     if (animate)
         repaint();
 
@@ -649,18 +641,17 @@ void SingPanel::frame (double seconds, bool animate)
     if (movementDirty.exchange (false))
         updateMovementStrip();
 
-    // On the dark Bloom sky the bottom row and the voice's shadow switch to light colours.
-    const bool dark = bloomMix > 0.5f;
+    // On the dark night sky the bottom row and the voice's shadow use light colours.
     for (auto* d : { &voicesDragger, &glideDragger, &outputDragger, &speedDragger, &barsDragger })
-        d->setOnSunset (! dark);
-    waveform.setDarkSky (dark);
+        d->setOnSunset (false);
+    waveform.setDarkSky (true);
 
-    // The Bloom sky glows brighter while notes sound.
+    // The fireflies glow brighter while notes sound.
     float level = 0.0f;
     for (const auto& f : found)
         if (f.note >= 0)
             level = std::max (level, f.level);
-    bloomSky.setActivity (level);
+    sky.setActivity (level);
     modules.frame (seconds, animate, level);
 
     const auto now = nowSeconds();
@@ -767,16 +758,7 @@ void SingPanel::resized()
 
 void SingPanel::paint (juce::Graphics& g)
 {
-    if (bloomMix < 1.0f)
-        sky.draw (g);
-    if (bloomMix > 0.0f)
-    {
-        if (bloomMix < 1.0f)
-            g.beginTransparencyLayer (bloomMix);
-        bloomSky.draw (g);
-        if (bloomMix < 1.0f)
-            g.endTransparencyLayer();
-    }
+    sky.draw (g);
 
     // Logo: a small gold star and the name.
     g.setColour (Colours::gold);
