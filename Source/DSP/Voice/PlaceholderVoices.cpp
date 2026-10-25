@@ -71,13 +71,395 @@ double smoothstep (double edge0, double edge1, double x)
     const double t = std::clamp ((x - edge0) / (edge1 - edge0), 0.0, 1.0);
     return t * t * (3.0 - 2.0 * t);
 }
+
+//==============================================================================
+// The voices that move. Each is a little score: what the singer does at each moment of an
+// 8 s take (vowel, pitch, vibrato, breath, loudness), sung by one or more singers.
+
+// More vowels: "eh", "ee" and "er" from Peterson and Barney (1952), "oh" from Hillenbrand et
+// al. (1995). The high "ee" uses women's values with the first formant raised to sit near the
+// note, as sopranos do.
+constexpr Vowel ohFormants     { { { 500, 70 }, { 900, 90 }, { 2450, 120 }, { 3350, 200 } } };
+constexpr Vowel ehFormants     { { { 530, 70 }, { 1840, 100 }, { 2480, 130 }, { 3450, 200 } } };
+constexpr Vowel eeFormants     { { { 270, 50 }, { 2290, 110 }, { 3010, 150 }, { 3600, 220 } } };
+constexpr Vowel highEeFormants { { { 560, 90 }, { 2700, 140 }, { 3300, 180 }, { 4300, 250 } } };
+constexpr Vowel highIhFormants { { { 620, 100 }, { 2400, 140 }, { 3150, 180 }, { 4200, 250 } } };
+
+// Glides between two vowels, the frequencies on a log scale as the ear hears them.
+Vowel mix (const Vowel& a, const Vowel& b, double t)
+{
+    Vowel v {};
+    for (size_t i = 0; i < v.size(); ++i)
+        v[i] = { a[i].hz * std::pow (b[i].hz / a[i].hz, t), a[i].bandwidth + (b[i].bandwidth - a[i].bandwidth) * t };
+    return v;
+}
+
+// Three vowels in a row: t from 0 to 1 goes a, b, c.
+Vowel mix3 (const Vowel& a, const Vowel& b, const Vowel& c, double t)
+{
+    return t < 0.5 ? mix (a, b, t * 2.0) : mix (b, c, t * 2.0 - 1.0);
+}
+
+double rise (double t0, double t1, double t) { return smoothstep (t0, t1, t); }
+double semis (double s) { return std::pow (2.0, s / 12.0); }
+
+struct Frame
+{
+    double f0 = 220.0;           // Hz, before vibrato
+    Vowel vowel = ahFormants;
+    double vibratoDepth = 0.0;   // fraction of the pitch (0.006 is about 10 cents)
+    double vibratoRate = 5.2;    // Hz
+    double voice = 1.0;          // the sung tone
+    double breath = 0.04;        // breath riding on each glottal pulse
+    double whisper = 0.0;        // breath on its own, as in a whisper
+    double level = 1.0;          // loudness
+    double tilt = 1.0;           // how fast the harmonics fall away: higher is darker
+};
+
+struct Score
+{
+    int singers = 1;
+    double spreadCents = 0.0;    // how far apart the singers are tuned
+    Frame (*at) (double t) = nullptr;
+};
+
+Frame openingOoh (double t)
+{
+    // "ooh" opens through "oh" to "ah", then closes again, louder and brighter when open.
+    const double open = rise (0.8, 3.6, t) - rise (4.6, 7.4, t);
+    Frame f;
+    f.f0 = 220.0;
+    f.vowel = mix3 (oohFormants, ohFormants, ahFormants, open);
+    f.vibratoDepth = 0.007 * rise (0.3, 1.3, t);
+    f.vibratoRate = 5.0;
+    f.breath = 0.06 - 0.025 * open;
+    f.level = 0.72 + 0.28 * open;
+    f.tilt = 1.15 - 0.25 * open;
+    return f;
+}
+
+Frame risingEe (double t)
+{
+    // "ah" to "eh" to "ee", growing brighter, the vibrato quickening as it goes.
+    const double p = rise (0.8, 6.8, t);
+    Frame f;
+    f.f0 = 246.94;
+    f.vowel = mix3 (ahFormants, ehFormants, eeFormants, p);
+    f.vibratoDepth = 0.006 * rise (0.4, 1.4, t) + 0.004 * p;
+    f.vibratoRate = 4.8 + 0.9 * p;
+    f.breath = 0.045;
+    f.level = 0.85 + 0.15 * p;
+    f.tilt = 1.05 - 0.2 * p;
+    return f;
+}
+
+Frame swellingAlto (double t)
+{
+    // A straight "oh" that swells (messa di voce): louder, brighter, less breathy, and the
+    // vibrato grows in from nothing and quickens. Then it eases back.
+    const double swell = rise (0.2, 4.8, t) - 0.6 * rise (5.0, 7.8, t);
+    const double vib = rise (1.2, 4.8, t);
+    Frame f;
+    f.f0 = 196.0 * semis (-0.5 * (1.0 - rise (0.0, 0.3, t)));   // a small scoop up to the note
+    f.vowel = mix (ohFormants, ahFormants, 0.25 * swell);
+    f.vibratoDepth = 0.02 * vib;
+    f.vibratoRate = 4.6 + 0.8 * vib;
+    f.breath = 0.09 - 0.06 * swell;
+    f.level = 0.35 + 0.65 * swell;
+    f.tilt = 1.4 - 0.55 * swell;
+    return f;
+}
+
+Frame whisperToAh (double t)
+{
+    // A whispered "ah" that finds its voice by the middle of the take.
+    const double voiced = rise (1.2, 3.4, t);
+    Frame f;
+    f.f0 = 220.0;
+    f.vowel = mix (haFormants, ahFormants, voiced);
+    f.vibratoDepth = 0.006 * rise (3.0, 4.5, t);
+    f.vibratoRate = 5.1;
+    f.voice = voiced;
+    f.breath = 0.06;
+    f.whisper = 0.8 * (1.0 - voiced) + 0.03;
+    f.level = 0.65 + 0.35 * voiced;
+    f.tilt = 1.2 - 0.2 * voiced;
+    return f;
+}
+
+Frame smallChoir (double t)
+{
+    // Six singers on "ah", the vowel rounding towards "oh" and back.
+    const double round = rise (1.5, 4.0, t) - rise (4.8, 7.2, t);
+    Frame f;
+    f.f0 = 196.0;
+    f.vowel = mix (ahFormants, ohFormants, 0.8 * round);
+    f.vibratoDepth = 0.008;
+    f.vibratoRate = 5.1;
+    f.breath = 0.05;
+    f.level = 0.9 + 0.1 * round;
+    f.tilt = 1.1;
+    return f;
+}
+
+Frame lowOm (double t)
+{
+    // A low "oh" that closes through "ooh" to a hummed "mm".
+    const double close = rise (2.5, 5.2, t);
+    Frame f;
+    f.f0 = 110.0;
+    f.vowel = mix3 (ohFormants, oohFormants, humFormants, close);
+    f.vibratoDepth = 0.004 * rise (0.6, 2.0, t);
+    f.vibratoRate = 4.6;
+    f.breath = 0.035 * (1.0 - close) + 0.01;
+    f.level = 1.0 - 0.25 * close;
+    f.tilt = 1.1 + 0.5 * close;
+    return f;
+}
+
+Frame highEe (double t)
+{
+    // A light soprano "ee", easing towards "ih" and back, with a quick, even vibrato.
+    const double ease = 0.5 - 0.5 * std::cos (twoPi * t / 8.0);
+    Frame f;
+    f.f0 = 523.25;
+    f.vowel = mix (highEeFormants, highIhFormants, ease);
+    f.vibratoDepth = 0.011 * rise (0.3, 1.0, t);
+    f.vibratoRate = 5.9 + 0.2 * std::sin (twoPi * 0.23 * t);
+    f.breath = 0.05;
+    f.level = 0.9 + 0.1 * ease;
+    f.tilt = 0.9;
+    return f;
+}
+
+Frame slowWah (double t)
+{
+    // "ooh" and "ah" in turn, four times across the take, louder as it opens.
+    const double open = 0.5 - 0.5 * std::cos (twoPi * t / 2.0);
+    Frame f;
+    f.f0 = 164.81;
+    f.vowel = mix (oohFormants, ahFormants, open);
+    f.vibratoDepth = 0.005 * rise (0.5, 1.5, t);
+    f.vibratoRate = 5.0;
+    f.breath = 0.045;
+    f.level = 0.62 + 0.38 * open;
+    f.tilt = 1.2 - 0.3 * open;
+    return f;
+}
+
+Frame overtoneDrone (double t)
+{
+    // Throat singing: one narrow resonance picks out a high harmonic of the drone and sweeps
+    // up and down the series, twice across the take.
+    const double sweep = 0.5 - 0.5 * std::cos (twoPi * t / 4.0);
+    Frame f;
+    f.f0 = 130.81;
+    f.vowel = { { { 420, 70 }, { 800.0 * std::pow (2.0, sweep), 25 }, { 2600, 250 }, { 3400, 350 } } };
+    f.vibratoDepth = 0.0015;
+    f.vibratoRate = 4.5;
+    f.breath = 0.02;
+    f.level = 1.0;
+    f.tilt = 0.9;
+    return f;
+}
+
+Frame fallingSigh (double t)
+{
+    // An "ah" that sighs down a whole tone near the end, its voice giving way to breath.
+    const double fall = rise (4.8, 7.2, t);
+    Frame f;
+    f.f0 = 233.08 * semis (-2.0 * fall);
+    f.vowel = mix (ahFormants, ohFormants, 0.4 * fall);
+    f.vibratoDepth = 0.008 * rise (0.5, 1.5, t) * (1.0 - fall);
+    f.vibratoRate = 5.3;
+    f.voice = 1.0 - 0.6 * fall;
+    f.breath = 0.04 + 0.2 * fall;
+    f.whisper = 0.12 * fall;
+    f.level = 1.0 - 0.35 * fall;
+    f.tilt = 1.0 + 0.4 * fall;
+    return f;
+}
+
+Score scoreFor (PlaceholderVowel v)
+{
+    switch (v)
+    {
+        case PlaceholderVowel::openingOoh:    return { 1, 0.0, openingOoh };
+        case PlaceholderVowel::risingEe:      return { 1, 0.0, risingEe };
+        case PlaceholderVowel::swellingAlto:  return { 1, 0.0, swellingAlto };
+        case PlaceholderVowel::whisperToAh:   return { 1, 0.0, whisperToAh };
+        case PlaceholderVowel::smallChoir:    return { 6, 9.0, smallChoir };
+        case PlaceholderVowel::lowOm:         return { 1, 0.0, lowOm };
+        case PlaceholderVowel::highEe:        return { 1, 0.0, highEe };
+        case PlaceholderVowel::slowWah:       return { 1, 0.0, slowWah };
+        case PlaceholderVowel::overtoneDrone: return { 1, 0.0, overtoneDrone };
+        case PlaceholderVowel::fallingSigh:   return { 1, 0.0, fallingSigh };
+        default:                              return {};
+    }
+}
+
+PlaceholderVoice singScore (const Score& score, double sr, int n)
+{
+    constexpr double designSeconds = 8.0;
+    constexpr int maxHarmonics = 96;
+    constexpr int block = 64;
+    const double dur = (double) n / sr;
+    const double toDesign = designSeconds / dur;
+
+    PlaceholderVoice voice;
+    voice.sampleRate = sr;
+    voice.rootHz = (float) score.at (designSeconds * 0.5).f0;
+
+    // Each singer is a little different: tuning, vibrato speed and phase, wander, loudness.
+    struct Singer
+    {
+        double detune = 1.0, rate = 1.0, vibratoPhase = 0.0, driftPhase = 0.0, gain = 1.0, phase = 0.0;
+        std::array<double, maxHarmonics + 1> amp {}, lastAmp {};
+        double norm = 0.0, lastNorm = 0.0;
+    };
+    std::vector<Singer> singers ((size_t) score.singers);
+    Noise rng { 0x9e3779b9u };
+    for (size_t k = 0; k < singers.size(); ++k)
+    {
+        auto& s = singers[k];
+        if (singers.size() > 1)
+        {
+            const double spread = (double) k / (double) (singers.size() - 1) * 2.0 - 1.0;
+            s.detune = std::pow (2.0, spread * score.spreadCents / 1200.0);
+            s.rate = 1.0 + 0.12 * rng.next();
+            s.vibratoPhase = twoPi * (0.5 + 0.5 * rng.next());
+            s.driftPhase = twoPi * (0.5 + 0.5 * rng.next());
+            s.gain = 0.85 + 0.15 * rng.next();
+        }
+    }
+
+    Noise noise;
+    // Breath through the vowel's own resonances, wider than the voiced ones as breath is.
+    std::array<Resonator, 4> breathRes { Resonator (700, 300, sr), Resonator (1200, 300, sr),
+                                         Resonator (2500, 400, sr), Resonator (3400, 500, sr) };
+    constexpr std::array<double, 4> breathGain { 1.0, 0.7, 0.4, 0.25 };
+
+    std::vector<double> out ((size_t) n);
+    std::array<double, block> pulse {};
+    bool first = true;
+
+    for (int start = 0; start < n; start += block)
+    {
+        const double t = (double) start / sr;
+        const Frame fr = score.at (t * toDesign);
+
+        for (size_t k = 0; k < 4; ++k)
+        {
+            const double hz = std::min (fr.vowel[k].hz, 0.45 * sr);
+            const double bw = std::max (fr.vowel[k].bandwidth * 2.5, 250.0);
+            // Keep each filter's state and only change its tuning, so it glides without clicks.
+            Resonator tuned (hz, bw, sr);
+            tuned.x1 = breathRes[k].x1; tuned.x2 = breathRes[k].x2;
+            tuned.y1 = breathRes[k].y1; tuned.y2 = breathRes[k].y2;
+            breathRes[k] = tuned;
+        }
+
+        for (auto& s : singers)
+        {
+            s.vibratoPhase += twoPi * fr.vibratoRate * s.rate * toDesign * (double) block / sr;
+            s.driftPhase += twoPi * 0.31 * toDesign * (double) block / sr;
+            const double drift = 0.0015 * std::sin (s.driftPhase) + 0.001 * std::sin (2.37 * s.driftPhase + 1.0);
+            const double f = fr.f0 * s.detune * (1.0 + fr.vibratoDepth * std::sin (s.vibratoPhase) + drift);
+
+            s.lastAmp = s.amp;
+            s.lastNorm = s.norm;
+            double power = 0.0;
+            for (int h = 1; h <= maxHarmonics; ++h)
+            {
+                const double hf = f * h;
+                const double a = hf < std::min (0.45 * sr, 12000.0) ? vowelGain (fr.vowel, hf) / std::pow ((double) h, fr.tilt) : 0.0;
+                s.amp[(size_t) h] = a;
+                power += a * a;
+            }
+            s.norm = 1.0 / std::sqrt (std::max (power, 1.0e-12));
+            if (first)
+            {
+                s.lastAmp = s.amp;
+                s.lastNorm = s.norm;
+            }
+            s.phase = std::fmod (s.phase, twoPi);
+            s.vibratoPhase = std::fmod (s.vibratoPhase, twoPi);
+
+            // Sum the harmonics for this block, easing from the last block's levels.
+            const int end = std::min (n, start + block);
+            const double step = twoPi * f / sr;
+            for (int i = start; i < end; ++i)
+            {
+                const double w = (double) (i - start) / (double) block;
+                s.phase += step;
+                const double c2 = 2.0 * std::cos (s.phase);
+                double prev = 0.0, cur = std::sin (s.phase), sum = 0.0;
+                for (int h = 1; h <= maxHarmonics; ++h)
+                {
+                    const double a = s.lastAmp[(size_t) h] * s.lastNorm + (s.amp[(size_t) h] * s.norm - s.lastAmp[(size_t) h] * s.lastNorm) * w;
+                    sum += a * cur;
+                    const double next = c2 * cur - prev;
+                    prev = cur;
+                    cur = next;
+                }
+                out[(size_t) i] += s.gain * fr.voice * sum / std::sqrt ((double) singers.size());
+                if (&s == &singers[0])
+                    pulse[(size_t) (i - start)] = 0.5 + 0.25 * c2;   // open phase of the glottal pulse
+            }
+        }
+        first = false;
+
+        // Breath: on each glottal pulse while singing (steady for a choir, whose pulses blur
+        // together), and on its own in a whisper.
+        const int end = std::min (n, start + block);
+        for (int i = start; i < end; ++i)
+        {
+            const double x = noise.next();
+            double b = 0.0;
+            for (size_t k = 0; k < 4; ++k)
+                b += breathGain[k] * breathRes[k].process (x);
+            const double p = singers.size() > 1 ? 0.5 : pulse[(size_t) (i - start)];
+            out[(size_t) i] += 4.0 * b * (fr.breath * fr.voice * p + fr.whisper);
+            out[(size_t) i] *= fr.level;
+        }
+    }
+
+    // Swell in, hold, fall away, with a little unevenness so it breathes like a person.
+    double peak = 0.0, power = 0.0;
+    for (int i = 0; i < n; ++i)
+    {
+        const double t = (double) i / sr;
+        const double env = smoothstep (0.0, 0.4, t) * (1.0 - smoothstep (dur - 0.8, dur, t))
+                         * (0.95 + 0.03 * std::sin (twoPi * 0.37 * t * toDesign) + 0.02 * std::sin (twoPi * 0.83 * t * toDesign + 2.0));
+        out[(size_t) i] *= env;
+        peak = std::max (peak, std::abs (out[(size_t) i]));
+        power += out[(size_t) i] * out[(size_t) i];
+    }
+
+    // Level them by loudness (about -16 dB RMS) rather than peak, so a bright, steady voice is
+    // no louder than a moving one, and never let the peak pass -6 dB.
+    const double rms = std::sqrt (power / (double) n);
+    const double gain = peak > 0.0 ? std::min (0.5 / peak, 0.16 / std::max (rms, 1.0e-9)) : 1.0;
+    voice.samples.resize ((size_t) n);
+    for (int i = 0; i < n; ++i)
+        voice.samples[(size_t) i] = (float) (out[(size_t) i] * gain);
+    return voice;
+}
 } // namespace
+
+float placeholderSeconds (PlaceholderVowel vowel)
+{
+    return scoreFor (vowel).at != nullptr ? 8.0f : 5.0f;
+}
 
 PlaceholderVoice makePlaceholderVoice (PlaceholderVowel vowel, double sr, float seconds)
 {
+    const int n = std::max (1, (int) (seconds * sr));
+    if (const auto score = scoreFor (vowel); score.at != nullptr)
+        return singScore (score, sr, n);
+
     PlaceholderVoice voice;
     voice.sampleRate = sr;
-    const int n = std::max (1, (int) (seconds * sr));
     voice.samples.assign ((size_t) n, 0.0f);
 
     Noise noise;

@@ -22,7 +22,20 @@ namespace
         { PlaceholderVowel::ah,     "ah",     "Soft Ah",     "A soft \"ah\" (stand-in until the recorded voices arrive)" },
         { PlaceholderVowel::hum,    "hum",    "Low Hum",     "A hummed note (stand-in until the recorded voices arrive)" },
         { PlaceholderVowel::breath, "breath", "Two Breaths", "Two slow breaths (stand-in until the recorded voices arrive)" },
+        // Voices that move across the recording.
+        { PlaceholderVowel::openingOoh,    "openingOoh",    "Opening Ooh",    "An \"ooh\" that opens to \"ah\" and closes again (generated)" },
+        { PlaceholderVowel::risingEe,      "risingEe",      "Rising Ee",      "An \"ah\" that brightens through \"eh\" to \"ee\" (generated)" },
+        { PlaceholderVowel::swellingAlto,  "swellingAlto",  "Swelling Alto",  "A straight \"oh\" that swells, its vibrato growing (generated)" },
+        { PlaceholderVowel::whisperToAh,   "whisperToAh",   "Whisper to Ah",  "A whisper that finds its voice (generated)" },
+        { PlaceholderVowel::smallChoir,    "smallChoir",    "Small Choir",    "Six singers on \"ah\", drifting to \"oh\" (generated)" },
+        { PlaceholderVowel::lowOm,         "lowOm",         "Low Om",         "A low \"oh\" that closes to \"mm\" (generated)" },
+        { PlaceholderVowel::highEe,        "highEe",        "High Ee",        "A light, high \"ee\" with quick vibrato (generated)" },
+        { PlaceholderVowel::slowWah,       "slowWah",       "Slow Wah",       "\"Ooh\" and \"ah\" in turn, opening and closing (generated)" },
+        { PlaceholderVowel::overtoneDrone, "overtoneDrone", "Overtone Drone", "A throat-sung drone with a sweeping, whistled overtone (generated)" },
+        { PlaceholderVowel::fallingSigh,   "fallingSigh",   "Falling Sigh",   "An \"ah\" that sighs down a tone into breath (generated)" },
     };
+
+    static_assert (std::size (kPlaceholders) == std::size (allPlaceholderVowels), "every placeholder voice needs a name");
 
     const PlaceholderInfo& infoFor (PlaceholderVowel v)
     {
@@ -65,7 +78,7 @@ VoiceData::Ptr VoiceData::fromPlaceholder (PlaceholderVowel vowel)
 
 VoiceData::Ptr VoiceData::makePlaceholder (PlaceholderVowel vowel)
 {
-    const auto p = makePlaceholderVoice (vowel, 48000.0, 5.0f);
+    const auto p = makePlaceholderVoice (vowel, 48000.0, placeholderSeconds (vowel));
     juce::AudioBuffer<float> buffer (1, (int) p.samples.size());
     buffer.copyFrom (0, 0, p.samples.data(), (int) p.samples.size());
 
