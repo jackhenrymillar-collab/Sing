@@ -27,7 +27,9 @@ struct LoopSettings
 {
     int start = 0;          // first sample of the loop, in the voice
     int length = 0;         // loop length in samples
-    int fade = 0;           // crossfade length in samples at the loop seam
+    int fade = 0;           // crossfade length in samples at the loop seam. Below 2 ms, the
+                            // end is moved (up to 12 ms) to match Start and joined with a
+                            // 2 ms fade instead, so even Fade 0 never cuts hard.
     LoopDirection direction = LoopDirection::forward;
 
     // Length of one cycle of the voice at its root pitch, in samples, from pitch detection.

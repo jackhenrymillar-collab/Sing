@@ -14,7 +14,8 @@ constexpr double halfPi = 1.57079632679489661923;
 
 // Renders one channel of the loop, forwards, with the seam crossfaded.
 // Returns the samples; fadeUsed reports the crossfade length actually applied.
-std::vector<float> renderForwardLoop (const float* x, int numSamples, const LoopSettings& loop, int& fadeUsed)
+std::vector<float> renderForwardLoop (const float* x, int numSamples, const LoopSettings& loop, int& fadeUsed,
+                                      bool linearFade = false)
 {
     const int s = loop.start;
     const int len = loop.length;
@@ -34,8 +35,10 @@ std::vector<float> renderForwardLoop (const float* x, int numSamples, const Loop
         for (int i = 0; i < fade; ++i)
         {
             const double t = ((double) i + 0.5) / (double) fade;
-            const double gIn = std::sin (t * halfPi);
-            const double gOut = std::cos (t * halfPi);
+            // Equal power for the long fades, over different sound; equal gain for the short
+            // seam fade, over two stretches already matched to each other.
+            const double gIn = linearFade ? t : std::sin (t * halfPi);
+            const double gOut = linearFade ? 1.0 - t : std::cos (t * halfPi);
             out[(size_t) (len - fade + i)] = (float) (gOut * x[s + len - fade + i] + gIn * x[s - fade + i]);
         }
         fadeUsed = fade;
@@ -57,6 +60,48 @@ std::vector<float> renderForwardLoop (const float* x, int numSamples, const Loop
     fadeUsed = fade;
     return out;
 }
+// Fade 0: no crossfade, but no hard cut at the seam either. Move the loop's end, by up to
+// 12 ms either way, to where the voice looks most like it does at Start (the few samples
+// either side of each), so the end runs on into Start as if the recording continued. Returns
+// the new length. Works on the channels summed, so both channels keep the same loop.
+// Returns 0 when there is nothing to match against (no voice before Start or after the end).
+int matchSeam (const float* const* input, int numChannels, int numSamples, double sampleRate, int s, int len)
+{
+    const int reach = std::max (1, (int) std::lround (0.012 * sampleRate));
+    const int half = std::max (2, (int) std::lround (0.0015 * sampleRate));
+    const auto at = [&] (int i)
+    {
+        float v = 0.0f;
+        for (int ch = 0; ch < numChannels; ++ch)
+            v += input[ch][i];
+        return v;
+    };
+    // Compare only where both stretches exist.
+    const int before = std::min (half, s);
+    int bestEnd = -1;
+    double bestCost = -1.0;
+    for (int e = s + len - reach; e <= s + len + reach; ++e)
+    {
+        if (e - s < std::max (4, len / 2) || e + half >= numSamples || e - before < 0)
+            continue;
+        double cost = 0.0, energy = 1.0e-12;
+        for (int i = -before; i < half; ++i)
+        {
+            const double a = at (e + i), b = at (s + i);
+            cost += (a - b) * (a - b);
+            energy += a * a + b * b;
+        }
+        cost /= energy;
+        // A slight pull toward the length you set, so a flat stretch doesn't drift it.
+        cost += 1.0e-3 * std::abs (e - (s + len)) / reach;
+        if (bestCost < 0.0 || cost < bestCost)
+        {
+            bestCost = cost;
+            bestEnd = e;
+        }
+    }
+    return bestEnd < 0 ? 0 : bestEnd - s;
+}
 } // namespace
 
 std::shared_ptr<const LoopSource> LoopSource::build (const float* const* input,
@@ -72,14 +117,30 @@ std::shared_ptr<const LoopSource> LoopSource::build (const float* const* input,
     settings.length = std::clamp (settings.length <= 0 ? numSamples - settings.start : settings.length,
                                   4, numSamples - settings.start);
 
+    const int numChannels = std::min (numInputChannels, 2);
+
+    // Fade (nearly) 0 on a loop that wraps: match the seam, then smooth what step is left with
+    // a 2 ms fade. That is too short to hear as a blend, and long enough not to click.
+    const int seamFade = std::max (1, (int) std::lround (0.002 * sampleRate));
+    bool seamMatched = false;
+    // A loop that starts at the very beginning of the voice, or ends at its very end, has
+    // nothing to join to and keeps its plain cut.
+    if (settings.direction != LoopDirection::pingPong && settings.fade < seamFade && settings.length > 8 * seamFade
+        && settings.start >= seamFade)
+        if (const int matched = matchSeam (input, numChannels, numSamples, sampleRate, settings.start, settings.length); matched > 0)
+        {
+            settings.length = matched;
+            settings.fade = seamFade;
+            seamMatched = true;
+        }
+
     std::shared_ptr<LoopSource> source (new LoopSource());
     source->rate = sampleRate;
     source->loop = settings;
 
-    const int numChannels = std::min (numInputChannels, 2);
     for (int ch = 0; ch < numChannels; ++ch)
     {
-        auto loop = renderForwardLoop (input[ch], numSamples, settings, source->fadeUsed);
+        auto loop = renderForwardLoop (input[ch], numSamples, settings, source->fadeUsed, seamMatched);
 
         switch (settings.direction)
         {

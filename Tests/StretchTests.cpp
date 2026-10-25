@@ -35,9 +35,11 @@ TEST_CASE ("Loop: Fade falls back to shortening when Start is near the beginning
 
 TEST_CASE ("Loop: Backward and Back & forth")
 {
+    // A Fade over 2 ms keeps the length exactly as set (Fade 0 would move the end to match
+    // the seam).
     auto x = noise (20000);
-    auto fwd = makeSource (x, { 1000, 5000, 0, LoopDirection::forward });
-    auto bwd = makeSource (x, { 1000, 5000, 0, LoopDirection::backward });
+    auto fwd = makeSource (x, { 1000, 5000, 200, LoopDirection::forward });
+    auto bwd = makeSource (x, { 1000, 5000, 200, LoopDirection::backward });
     auto pp = makeSource (x, { 1000, 5000, 0, LoopDirection::pingPong });
 
     bool reversed = true;
@@ -50,6 +52,29 @@ TEST_CASE ("Loop: Backward and Back & forth")
     check (std::abs (fwd->toVoicePosition (10.0) - 1010.0) < 1e-9, "forward position maps to the voice");
     check (std::abs (bwd->toVoicePosition (0.0) - 5999.0) < 1e-9, "backward starts at the loop end");
     check (std::abs (pp->toVoicePosition (6000.0) - (1000.0 + 3998.0)) < 1e-9, "back & forth maps the return trip");
+}
+
+TEST_CASE ("Loop: Fade 0 joins the seam without a hard cut or a blend")
+{
+    // A 220 Hz tone whose loop length is not a whole number of cycles: cut plainly, the seam
+    // would jump. Fade 0 moves the end (a few ms at most) so the end runs on into Start.
+    auto x = sine (220.0, 96000);
+    for (int length : { 30011, 40000, 47777 })
+    {
+        auto src = makeSource (x, { 20000, length, 0, LoopDirection::forward });
+        const int n = src->size();
+        const float* b = src->channel (0);
+        const float step = std::abs (b[n - 1] - b[0]);
+        const float cycleStep = (float) (0.5 * twoPi * 220.0 / sr);   // largest step inside the tone
+        INFO ("length " << length << " became " << n << ", seam step " << step);
+        CHECK (std::abs (n - length) <= (int) (0.012 * sr));
+        CHECK (step <= cycleStep * 1.1f);
+        CHECK (src->effectiveFade() <= (int) (0.002 * sr) + 1);
+    }
+    // A loop starting at the very beginning of the voice has nothing before it to join to.
+    auto whole = makeSource (x, { 0, 30011, 0, LoopDirection::forward });
+    CHECK (whole->size() == 30011);
+    CHECK (whole->effectiveFade() == 0);
 }
 
 TEST_CASE ("Granular: speed 1, pitch 1, no jitter reproduces the loop")
