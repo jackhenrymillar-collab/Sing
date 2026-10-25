@@ -9,7 +9,7 @@ namespace sing::ui
 {
 
 // The panel's background, in both engines: a crisp, dark purple night sky full of sharp
-// stars, with small red, green and blue fireflies drifting slowly all over it. Three knobs
+// stars, with small fireflies in shades of warm red, orange and yellow drifting slowly all over it. Three knobs
 // steer them:
 //
 // - Space: the bigger the reverb, the wider and brighter each firefly's glow (its bloom).
@@ -54,12 +54,12 @@ private:
         float fx1, fy1, fx2, fy2;          // their rates
         float px1, py1, px2, py2;          // and phases
         float radius, pulseRate, pulsePhase;
-        int colour;                        // 0 red, 1 green, 2 blue
+        int colour;                        // one of the six warm shades
     };
     std::vector<Star> stars;
     std::vector<Firefly> fireflies;
     juce::Image background;
-    std::array<juce::Image, 3> glows;      // one soft glow per colour
+    std::array<juce::Image, 6> glows;      // one soft glow per colour
     float backgroundScale = 0.0f;
     bool motion = true, bypassed = false;
     double time = 0.0, lastTime = -1.0;

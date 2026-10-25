@@ -16,10 +16,15 @@ namespace
     // The time the still picture shows when motion is off.
     constexpr double kStillTime = 37.0;
 
-    const juce::Colour kColours[3] = {
-        juce::Colour (0xffff4d5e),   // red
-        juce::Colour (0xff52ff8a),   // green
-        juce::Colour (0xff4f86ff),   // blue
+    // Shades of warm red, orange and warm yellow, like embers and candle flames.
+    constexpr int kNumColours = 6;
+    const juce::Colour kColours[kNumColours] = {
+        juce::Colour (0xffff3d2e),   // warm red
+        juce::Colour (0xffff5a26),   // red-orange
+        juce::Colour (0xffff8a2a),   // orange
+        juce::Colour (0xffffa53a),   // amber
+        juce::Colour (0xffffc94a),   // warm yellow
+        juce::Colour (0xffffdb6b),   // golden yellow
     };
 
     // A soft round glow: bright in the middle, fading to nothing at the edge.
@@ -86,7 +91,7 @@ NightSky::NightSky()
         f.radius = 2.2f + 1.6f * rnd();
         f.pulseRate = 0.15f + 0.3f * rnd();
         f.pulsePhase = rnd();
-        f.colour = i % 3;
+        f.colour = i % kNumColours;
         fireflies.push_back (f);
     }
 }
@@ -138,7 +143,7 @@ void NightSky::rebuildBackground (float pixelScale)
     // One soft glow per colour, drawn once and stamped for every firefly: much cheaper
     // than filling a gradient for each of them every frame.
     const int size = 128;
-    for (int k = 0; k < 3; ++k)
+    for (int k = 0; k < kNumColours; ++k)
     {
         glows[(size_t) k] = juce::Image (juce::Image::ARGB, size, size, true);
         juce::Graphics gg (glows[(size_t) k]);
