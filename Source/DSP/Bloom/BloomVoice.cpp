@@ -451,7 +451,10 @@ void BloomVoice::beginFrame() noexcept
 
     // Onsets: while a transient is inside the window, move at the recorded speed (or the
     // set speed, if faster), so it passes as it was played instead of smearing over seconds.
-    if (! params.hold && params.onsets > 0.0f && params.speed < 1.0f)
+    // Not while frozen (Hold, or Stretch at Held): a held note stays where it starts, even
+    // on a transient (such as a loop seam with no Fade).
+    const bool frozen = params.hold || params.speed <= 0.0f;
+    if (! frozen && params.onsets > 0.0f && params.speed < 1.0f)
     {
         const double realTime = (double) hop * (voiceRate / hostRate);
         const double half = 0.5 * (double) size * voiceRate / hostRate;
