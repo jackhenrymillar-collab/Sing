@@ -37,6 +37,7 @@ SingProcessor::SingProcessor()
     smear = state.getRawParameterValue (ParamID::smear);
     tone = state.getRawParameterValue (ParamID::tone);
     keepVowel = state.getRawParameterValue (ParamID::keepVowel);
+    pitchMode = state.getRawParameterValue (ParamID::pitchMode);
     onsetsOn = state.getRawParameterValue (ParamID::onsetsOn);
     onsets = state.getRawParameterValue (ParamID::onsets);
     shiftOn = state.getRawParameterValue (ParamID::shiftOn);
@@ -312,6 +313,7 @@ SynthSettings SingProcessor::readSettings() const noexcept
     s.voice.octaveLevels = { octaveDown2->load() * 0.01f, octaveDown1->load() * 0.01f, octaveRoot->load() * 0.01f,
                              octaveUp1->load() * 0.01f, octaveUp15->load() * 0.01f, octaveUp2->load() * 0.01f };
     s.voice.keepVowel = keepVowel->load() > 0.5f;
+    s.voice.pitchMode = juce::roundToInt (pitchMode->load()) == 1 ? PitchMode::stft : PitchMode::formant;
     s.voice.rootHz = rootHz.load();
     s.voice.pitched = rootPitched.load();
     s.polyphony = juce::roundToInt (voices->load());

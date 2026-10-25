@@ -170,6 +170,7 @@ private:
     std::atomic<float>* smear = nullptr;
     std::atomic<float>* tone = nullptr;
     std::atomic<float>* keepVowel = nullptr;
+    std::atomic<float>* pitchMode = nullptr;
     std::atomic<float>* onsetsOn = nullptr;
     std::atomic<float>* onsets = nullptr;
     std::atomic<float>* shiftOn = nullptr;

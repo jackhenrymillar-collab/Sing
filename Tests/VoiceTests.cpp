@@ -3,6 +3,7 @@
 #include "TestHelpers.h"
 
 #include "Voice/FormantShifter.h"
+#include "Voice/StftPitchShifter.h"
 #include "Common/RealFFT.h"
 #include "Voice/PlaceholderVoices.h"
 #include "Voice/SingSynth.h"
@@ -716,4 +717,182 @@ TEST_CASE ("Synth: Grain stays in phase with a voice whose pitch moves, at any S
         CHECK (back.first < fresh.first + 1.0);
         CHECK (std::abs (back.second - fresh.second) < 0.5);
     }
+}
+
+//==============================================================================
+namespace
+{
+std::vector<float> stftShift (const std::vector<float>& x, float periodSamples, float factor, bool envelope,
+                              float envelopeRatio = 1.0f, int* latency = nullptr)
+{
+    StftPitchShifter f;
+    f.prepare (sr, 0.04f);
+    const int d = f.start (periodSamples, factor, envelope, envelopeRatio);
+    if (latency != nullptr)
+        *latency = d;
+    std::vector<float> y (x.size());
+    for (size_t i = 0; i < x.size(); i += 256)
+    {
+        const int n = (int) std::min<size_t> (256, x.size() - i);
+        f.process (x.data() + i, nullptr, y.data() + i, nullptr, n);
+    }
+    return y;
+}
+
+// A steady vowel-like tone: harmonics of f0 under a formant at 700 Hz.
+std::vector<float> harmonicVowel (double f0, int n)
+{
+    std::vector<float> x ((size_t) n);
+    for (size_t i = 0; i < x.size(); ++i)
+    {
+        double v = 0.0;
+        for (int h = 1; h * f0 < 9000.0; ++h)
+            v += (std::exp (-std::pow ((h * f0 - 700.0) / 300.0, 2.0)) + 0.02) * std::sin (twoPi * h * f0 * (double) i / sr + h);
+        x[i] = (float) (0.1 * v);
+    }
+    return x;
+}
+
+// Power on the harmonics of f0 against power between them, in dB.
+double harmonicPurityDb (const std::vector<float>& y, int from, double f0)
+{
+    constexpr int size = 16384;
+    sing::RealFFT fft (size);
+    std::vector<float> frame ((size_t) size), spectrum ((size_t) size + 2);
+    for (int i = 0; i < size; ++i)
+        frame[(size_t) i] = y[(size_t) (from + i)] * (float) (0.5 - 0.5 * std::cos (twoPi * i / size));
+    fft.forward (frame.data(), spectrum.data());
+    double on = 0.0, off = 0.0;
+    for (int k = 1; k < size / 2; ++k)
+    {
+        const double hz = k * sr / size;
+        if (hz > 8000.0)
+            break;
+        const double p = (double) spectrum[(size_t) (2 * k)] * spectrum[(size_t) (2 * k)] + (double) spectrum[(size_t) (2 * k + 1)] * spectrum[(size_t) (2 * k + 1)];
+        const double d = std::abs (hz - f0 * std::round (hz / f0));
+        if (d < 12.0) on += p;
+        else if (d > 25.0) off += p;
+    }
+    return 10.0 * std::log10 (on / std::max (off, 1.0e-30));
+}
+} // namespace
+
+TEST_CASE ("STFT shifter at factor 1 passes the voice through, delayed")
+{
+    const auto x = voice (96000);
+    int d = 0;
+    const auto y = stftShift (x, (float) (sr / 220.0), 1.0f, true, 1.0f, &d);
+    double maxErr = 0.0;
+    for (int i = d + 10; i < 96000; ++i)
+        maxErr = std::max (maxErr, (double) std::abs (y[(size_t) i] - x[(size_t) (i - d)]));
+    INFO ("latency " << d << ", max error " << maxErr);
+    CHECK (maxErr < 2.0e-3);
+}
+
+TEST_CASE ("STFT shifter moves the pitch, keeps the partials clean and the level even")
+{
+    const double f0 = 165.0;
+    const auto x = harmonicVowel (f0, 144000);
+    for (const float st : { -12.0f, -7.0f, 7.0f, 12.0f })
+    {
+        const float factor = std::exp2 (st / 12.0f);
+        const auto y = stftShift (x, (float) (sr / f0), factor, false);
+        const double hz = detectPitch (y.data() + 48000, 48000, sr).hz;
+        const double purity = harmonicPurityDb (y, 48000, f0 * factor);
+        const double level = db (rms (y.data() + 48000, 48000) / rms (x.data() + 48000, 48000));
+        INFO (st << " st: pitch " << hz << " Hz, partials " << purity << " dB above the gaps, level " << level << " dB");
+        CHECK_THAT (hz, WithinAbs (f0 * factor, f0 * factor * 0.01));
+        CHECK (purity > 40.0);
+        CHECK (std::abs (level) < 2.5);
+    }
+}
+
+TEST_CASE ("STFT shifter keeps the vowel when asked, and moves it with Formant")
+{
+    const double f0 = 165.0;
+    const auto x = harmonicVowel (f0, 144000);
+    const float fifth = std::exp2 (7.0f / 12.0f);
+    const double base = brightness (x, 48000, 48000);
+    const double plain = brightness (stftShift (x, (float) (sr / f0), fifth, false), 48000, 48000);
+    const double kept = brightness (stftShift (x, (float) (sr / f0), fifth, true, 1.0f), 48000, 48000);
+    const double darker = brightness (stftShift (x, (float) (sr / f0), fifth, true, 1.0f / fifth), 48000, 48000);
+    INFO ("brightness: original " << base << ", plain " << plain << ", kept " << kept << ", kept and Formant -7 " << darker);
+    CHECK (plain > kept * 1.3);
+    CHECK (kept < base * 1.35);
+    CHECK (darker < kept * 0.85);
+}
+
+TEST_CASE ("Synth: STFT pitch mode plays the key at the voice's own speed")
+{
+    auto src = placeholderSource (PlaceholderVowel::ah);
+    auto play = [&src] (int note, PitchMode mode, bool keep)
+    {
+        SingSynth synth;
+        synth.prepare (sr, 256);
+        synth.setSource (src.get());
+        auto s = plainSynth (196.0f);
+        s.voice.pitchMode = mode;
+        s.voice.keepVowel = keep;
+        synth.setSettings (s);
+        synth.noteOn (note, 1.0f);
+        return mono (renderSynth (synth, 72000));
+    };
+
+    const auto up = play (62, PitchMode::stft, true);
+    for (float v : up)
+        REQUIRE (std::isfinite (v));
+    CHECK_THAT (detectPitch (up.data() + 24000, 48000, sr).hz, WithinAbs (196.0 * std::exp2 (7.0 / 12.0), 3.0));
+    CHECK_THAT (detectPitch (play (50, PitchMode::stft, true).data() + 24000, 48000, sr).hz, WithinAbs (196.0 * std::exp2 (-5.0 / 12.0), 3.0));
+
+    // Keep vowel works the same way as in Formant mode.
+    const double kept = brightness (up, 24000, 48000);
+    const double plain = brightness (play (62, PitchMode::stft, false), 24000, 48000);
+    INFO ("brightness a fifth up: kept " << kept << ", plain " << plain);
+    CHECK (plain > kept * 1.3);
+
+    // Level close to the root's.
+    const auto root = play (55, PitchMode::stft, true);
+    const double level = db (rms (up.data() + 24000, 48000) / rms (root.data() + 24000, 48000));
+    INFO ("level a fifth up " << level << " dB");
+    CHECK (std::abs (level) < 3.0);
+}
+
+TEST_CASE ("Synth: STFT pitch mode works in Bloom too")
+{
+    const auto v = makePlaceholderVoice (PlaceholderVowel::ah, sr, 4.0f);
+    LoopSettings ls;
+    ls.start = (int) (1.0 * sr);
+    ls.length = (int) (2.0 * sr);
+    ls.fade = (int) (0.3 * sr);
+    ls.pitchPeriod = (float) (sr / v.rootHz);
+    ls.analyseForBloom = true;
+    ls.hostSampleRate = sr;
+    const float* ch[] = { v.samples.data() };
+    const auto src = LoopSource::build (ch, 1, (int) v.samples.size(), sr, ls);
+
+    auto play = [&] (int note, PitchMode mode)
+    {
+        SingSynth synth;
+        synth.prepare (sr, 256);
+        synth.setSource (src.get());
+        auto s = plainSynth (v.rootHz);
+        s.voice.mode = StretchMode::bloom;
+        s.voice.stretch = 0.6f;
+        s.voice.pitchMode = mode;
+        synth.setSettings (s);
+        synth.noteOn (note, 1.0f);
+        return mono (renderSynth (synth, 96000));
+    };
+
+    const int root = (int) std::lround (hzToMidi (v.rootHz));
+    const auto up = play (root + 7, PitchMode::stft);
+    for (float x : up)
+        REQUIRE (std::isfinite (x));
+    CHECK_THAT (detectPitch (up.data() + 48000, 48000, sr).hz, WithinAbs (v.rootHz * std::exp2 (((double) root + 7.0 - hzToMidi (v.rootHz)) / 12.0), 4.0));
+
+    // About as loud as Bloom shifting by itself.
+    const auto own = play (root + 7, PitchMode::formant);
+    const double level = db (rms (up.data() + 48000, 48000) / rms (own.data() + 48000, 48000));
+    INFO ("STFT against Bloom's own shift, a fifth up: " << level << " dB");
+    CHECK (std::abs (level) < 3.0);
 }
