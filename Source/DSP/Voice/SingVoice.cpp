@@ -103,6 +103,7 @@ void SingVoice::prepare (double sampleRate, int maxBlockSize)
         c.running = false;
     }
     shifter.prepare (hostRate, 0.04f);
+    stft.prepare (hostRate, 0.04f);
     bloom.prepare (hostRate);
     envelopeGains.assign ((size_t) subBlock, 0.0f);
     mixLeft.assign ((size_t) subBlock, 0.0f);
@@ -122,6 +123,13 @@ float SingVoice::pitchRatio (int copy) const noexcept
     return std::exp2 ((semitones + shape.cents * 0.01f) / 12.0f);
 }
 
+float SingVoice::grainRatio (int copy) const noexcept
+{
+    if (! stftNote)
+        return pitchRatio (copy);
+    return std::exp2 (copyShape (copy, voiceSettings.spread).cents / 1200.0f);
+}
+
 float SingVoice::formantRatioNow() const noexcept
 {
     // Playing away from the root resamples the voice, which drags its formants along with the
@@ -131,6 +139,25 @@ float SingVoice::formantRatioNow() const noexcept
     if (! voiceSettings.keepVowel)
         return std::exp2 (voiceSettings.formantSemitones / 12.0f);
     return std::exp2 ((voiceSettings.formantSemitones - semitones) / 12.0f);
+}
+
+SingVoice::StftShift SingVoice::stftShift() const noexcept
+{
+    // Keep vowel on: the envelope stays where it was recorded, moved only by Formant. Off:
+    // the envelope moves with the key, like resampling, plus Formant.
+    StftShift s;
+    s.factor = std::exp2 (semitones / 12.0f);
+    if (voiceSettings.keepVowel)
+    {
+        s.envelope = true;
+        s.envelopeRatio = std::exp2 (voiceSettings.formantSemitones / 12.0f);
+    }
+    else
+    {
+        s.envelope = std::abs (voiceSettings.formantSemitones) > 0.01f;
+        s.envelopeRatio = std::exp2 ((voiceSettings.formantSemitones + semitones) / 12.0f);
+    }
+    return s;
 }
 
 float SingVoice::periodFor (const GranularEngine& engine, float ratio) const noexcept
@@ -186,6 +213,7 @@ void SingVoice::start (const LoopSource& src, int midiNote, float velocity, cons
         return;
     }
 
+    stftNote = settings.pitchMode == PitchMode::stft;
     for (int i = 0; i < maxCopies; ++i)
         if (copyShape (i, voiceSettings.spread).weight > 0.0f)
             startCopy (i);
@@ -278,7 +306,7 @@ SingVoice::Moved SingVoice::getMoved() const noexcept
 void SingVoice::startCopy (int index) noexcept
 {
     auto& c = copies[(size_t) index];
-    const float ratio = pitchRatio (index);
+    const float ratio = grainRatio (index);
 
     c.engine.setSeed (seedBase * 2654435761u + (uint32_t) index * 40503u);
     c.engine.setSettings (StretchKnob::toGranularSettings (voiceSettings.stretch));
@@ -295,7 +323,14 @@ void SingVoice::primeShifter() noexcept
     // The shifter runs latency() samples behind its input. Feed it that much of the note up
     // front (the copies mixed, as renderSubBlock does at the start), so its output starts
     // exactly when the note does.
-    int prime = shifter.start (periodFor (copies[0].engine, pitchRatio (0)), formantRatioNow());
+    int prime = 0;
+    if (stftNote)
+    {
+        const auto shift = stftShift();
+        prime = stft.start (periodFor (copies[0].engine, grainRatio (0)), shift.factor, shift.envelope, shift.envelopeRatio);
+    }
+    else
+        prime = shifter.start (periodFor (copies[0].engine, pitchRatio (0)), formantRatioNow());
     std::array<CopyShape, (size_t) maxCopies> shapes {};
     const float norm = copyShapes (voiceSettings.spread, shapes);
     constexpr float halfPi = 1.57079632679f;
@@ -323,7 +358,10 @@ void SingVoice::primeShifter() noexcept
             }
             c.gain = g;
         }
-        shifter.process (mixLeft.data(), mixRight.data(), mixLeft.data(), mixRight.data(), n);
+        if (stftNote)
+            stft.process (mixLeft.data(), mixRight.data(), mixLeft.data(), mixRight.data(), n);
+        else
+            shifter.process (mixLeft.data(), mixRight.data(), mixLeft.data(), mixRight.data(), n);
         prime -= n;
     }
 }
@@ -358,6 +396,7 @@ void SingVoice::stop() noexcept
     }
     bloom.stop();
     bloomNote = false;
+    stftNote = false;
     source = nullptr;
 }
 
@@ -494,7 +533,7 @@ void SingVoice::renderSubBlock (float* left, float* right, int n) noexcept
             startCopy (i);
         }
 
-        const float ratio = pitchRatio (i);
+        const float ratio = grainRatio (i);
         c.engine.setSettings (granular);
         c.engine.setParameters ({ speed, ratio, voiceSettings.hold });
 
@@ -523,9 +562,19 @@ void SingVoice::renderSubBlock (float* left, float* right, int n) noexcept
         }
     }
 
-    shifter.setPeriod (periodFor (copies[0].engine, pitchRatio (0)));
-    shifter.setRatio (formantRatio);
-    shifter.process (mixLeft.data(), mixRight.data(), mixLeft.data(), mixRight.data(), n);
+    if (stftNote)
+    {
+        const auto shift = stftShift();
+        stft.setPeriod (periodFor (copies[0].engine, grainRatio (0)));
+        stft.setShift (shift.factor, shift.envelope, shift.envelopeRatio);
+        stft.process (mixLeft.data(), mixRight.data(), mixLeft.data(), mixRight.data(), n);
+    }
+    else
+    {
+        shifter.setPeriod (periodFor (copies[0].engine, pitchRatio (0)));
+        shifter.setRatio (formantRatio);
+        shifter.process (mixLeft.data(), mixRight.data(), mixLeft.data(), mixRight.data(), n);
+    }
 
     applyEnvelope (left, right, n);
 }

@@ -132,6 +132,32 @@ pitch shifting: the vowel moves with the key, so higher keys sound smaller and l
 larger, and Formant moves it from there. With Formant at 0 the shifter then does nothing at
 all. In Bloom, Keep vowel off moves the envelope with the key too.
 
+### KEYS: Formant or STFT
+
+**KEYS** (parameter `pitchmode`, in the loop row) picks how a Grain note is moved to its key.
+Bloom ignores it, since Bloom shifts pitch in its own spectrum, and the pills dim there.
+
+- **Formant** (the default, and how Sing always worked): the grains play the voice faster or
+  slower, and the formant shifter above puts the vowel back.
+- **STFT**: the grains play the voice at its recorded pitch and speed (only Spread's detune is
+  applied to them), and `StftPitchShifter` moves the mix to the key in the spectrum. It adapts
+  stftPitchShift by Jürgen Hock (MIT, see THIRD_PARTY_NOTICES.md). A phase vocoder finds each
+  bin's exact frequency, the bins are read at bin / factor with their frequencies multiplied by
+  factor, and the phases run on at the new frequencies. With Keep vowel on, the spectral
+  envelope (log magnitudes smoothed in the cepstrum, lifter at 1 ms or 0.7 of the period) is
+  divided out before the shift and put back after, moved only by Formant. Off, the envelope
+  moves with the key, plus Formant.
+
+The library's defaults (1024-sample frames, 4x overlap) smeared the partials of low voices:
+on a 110 Hz tone shifted a fifth, the partials stood only 21 dB above the gaps between them.
+Sing uses frames of at least eight periods and 4096 samples at 48 kHz, with 8x overlap (about
+50 dB), and keeps each frame's power so every key plays at the root's level. The cepstrum runs
+on a spectrum a quarter as fine, and atan2, sin and cos are polynomial approximations.
+
+CPU: each STFT note costs about three times a Formant note's shifter. On the cloud build
+machine, 16 notes at Spread 50% took about 36% of a core in Formant mode and about 95% in
+STFT mode. A Mac is several times faster.
+
 
 ## CPU
 

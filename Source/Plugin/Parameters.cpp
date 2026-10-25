@@ -15,6 +15,11 @@ juce::StringArray engineNames()
     return { "Grain", "Bloom" };
 }
 
+juce::StringArray pitchModeNames()
+{
+    return { "Formant", "STFT" };
+}
+
 juce::String formatSeconds (float s)
 {
     if (s < 0.995f)
@@ -197,6 +202,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::moveSync, v }, "Movement Sync", false));
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::moveBars, v }, "Movement Bars", moveBarNames(), 4));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::moveEach, v }, "Movement Each Note", true));
+
+    // Formant (the default) leaves older sessions sounding as they did.
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::pitchMode, v }, "Pitch Mode", pitchModeNames(), 0));
 
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::bypass, v }, "Bypass", false));
 

@@ -3,6 +3,7 @@
 #include "Bloom/BloomVoice.h"
 #include "Stretch/GranularEngine.h"
 #include "Voice/FormantShifter.h"
+#include "Voice/StftPitchShifter.h"
 #include "Voice/Movement.h"
 
 #include <array>
@@ -11,6 +12,13 @@
 
 namespace sing
 {
+
+// How a granular note moves to its key.
+enum class PitchMode
+{
+    formant,   // resample the voice (grains read faster or slower), then FormantShifter
+    stft,      // grains at the recorded pitch, then StftPitchShifter on the mix
+};
 
 // Settings shared by every note, read from the plugin's parameters once per block.
 struct VoiceSettings
@@ -23,6 +31,9 @@ struct VoiceSettings
     // On: the vowel stays as recorded on every key (formant-preserving pitch shift). Off:
     // plain pitch shifting, so the vowel moves with the key (higher keys sound smaller).
     bool keepVowel = true;
+    // Which pitch shifter granular notes use (Bloom shifts in its own spectrum). A note
+    // keeps its mode until it ends.
+    PitchMode pitchMode = PitchMode::formant;
     bool hold = false;
     float glideSeconds = 0.0f;
     float pitchBendSemitones = 0.0f;
@@ -154,7 +165,12 @@ private:
     // One formant shifter for the whole note, after the Spread copies are mixed: the copies
     // share the note's formant setting, so they don't each need one.
     FormantShifter shifter;
+    // The STFT pitch mode's shifter, used instead for notes started in that mode.
+    StftPitchShifter stft;
+    bool stftNote = false;
     void primeShifter() noexcept;
+    struct StftShift { float factor = 1.0f; bool envelope = false; float envelopeRatio = 1.0f; };
+    StftShift stftShift() const noexcept;
 
 
     void renderSubBlock (float* left, float* right, int numSamples) noexcept;
@@ -166,6 +182,9 @@ private:
     void startCopy (int index) noexcept;
     float targetSemitones() const noexcept;
     float pitchRatio (int copy) const noexcept;
+    // The rate a copy's grains play at: the whole pitch in Formant mode, only the copy's
+    // Spread detune in STFT mode (the shifter does the rest).
+    float grainRatio (int copy) const noexcept;
     float periodFor (const GranularEngine& engine, float ratio) const noexcept;
     float formantRatioNow() const noexcept;
     // Works out this sub-block's settings (voiceSettings) from the knobs (baseSettings) and

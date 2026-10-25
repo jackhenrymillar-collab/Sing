@@ -32,6 +32,8 @@ namespace ParamID
     inline constexpr auto tone       = "tone";
     inline constexpr auto window     = "window";
     inline constexpr auto keepVowel  = "keepvowel";
+    // How keys are pitched in Grain: Formant (resample, then the formant shifter) or STFT.
+    inline constexpr auto pitchMode  = "pitchmode";
     // Bloom's Advanced modules: an on/off switch for each, and the two newest modules.
     inline constexpr auto onsetsOn   = "onsetson";
     inline constexpr auto onsets     = "onsets";
@@ -85,6 +87,9 @@ juce::StringArray directionNames();
 
 // The Stretch engines, in parameter order: Grain (granular) and Bloom (spectral smear).
 juce::StringArray engineNames();
+
+// The pitch modes for keys, in parameter order: Formant and STFT (matches PitchMode).
+juce::StringArray pitchModeNames();
 
 // The Filter's slopes, in parameter order: Sharp, 6 dB and 12 dB per octave.
 juce::StringArray filterSlopeNames();
