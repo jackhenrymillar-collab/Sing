@@ -109,7 +109,7 @@ bool ModuleSettings::isOn (ModuleKind k) const noexcept
         case ModuleKind::compressor:  return compressorOn;
         case ModuleKind::octaves:     return octavesOn;
         case ModuleKind::binaural:    return binauralOn;
-        case ModuleKind::spaceFilter: return spaceFilterOn;
+        case ModuleKind::spaceFilter: return spaceLevel > 0.0f;
     }
     return true;
 }
@@ -390,26 +390,36 @@ void drawModuleVisual (juce::Graphics& g, ModuleKind kind, juce::Rectangle<float
 
         case ModuleKind::spaceFilter:
         {
-            // The reverb's wash across the spectrum, kept between Low and High. The dry voice
-            // is untouched, so a faint outline shows what the cut takes away.
-            const float lo = filterUnit (std::min (s.spaceLowHz, s.spaceHighHz)), hi = filterUnit (std::max (s.spaceLowHz, s.spaceHighHz));
-            for (int i = 0; i < 58; ++i)
+            // The reverb's tail after a sung note: the note at the left, then echoes that
+            // fade away in a straight line on a decibel scale, gone (60 dB down) at Decay. The
+            // time axis runs to a minute, stretched at the start; Level sets the tail's
+            // height and Size how far apart the echoes are. The cuts, when on, dim the tail.
+            const auto fall = [&s] (float x)
             {
-                const float x = 2.0f + (float) i * 2.0f;
-                float hh = 8.0f + 30.0f * (0.6f + 0.4f * hash (i + 57)) * (1.0f - (float) i / 110.0f);
-                hh *= 0.85f + 0.15f * std::sin (t * 1.4f + (float) i * 0.7f);
-                const float gain = cutGain (unitHz (x + 0.6f), s.spaceLowHz, s.spaceHighHz, 2);
-                g.setColour (lavender.withAlpha (0.14f));
-                g.fillRect (u.x (x), u.y (56.0f - hh), std::max (1.0f, u.w (1.2f)), u.h (hh));
-                g.setColour (lavender.interpolatedWith (Colours::goldLight, 0.35f).withAlpha (0.85f * gain));
-                g.fillRect (u.x (x), u.y (56.0f - hh * gain), std::max (1.0f, u.w (1.2f)), u.h (hh * gain));
-            }
-            g.setColour (Colours::gold.withAlpha (0.5f));
-            for (float y = 4.0f; y < 56.0f; y += 5.0f)
+                const float f = x / 120.0f, seconds = 60.0f * f * f;
+                return std::max (0.0f, 1.0f - seconds / std::max (0.1f, s.spaceDecaySeconds));
+            };
+            const float spacing = 1.4f + 3.2f * juce::jlimit (0.0f, 1.0f, s.spaceSize * 0.01f);
+            const float height = 46.0f * (0.35f + 0.65f * juce::jlimit (0.0f, 1.0f, s.spaceLevel * 0.01f));
+            const float bright = s.spaceFilterOn ? juce::jlimit (0.25f, 1.0f, std::log10 (s.spaceHighHz / std::max (20.0f, s.spaceLowHz)) / 2.6f) : 1.0f;
+            g.setColour (Colours::goldLight.withAlpha (0.9f));
+            g.fillRect (u.x (2.0f), u.y (56.0f - height), std::max (1.5f, u.w (1.6f)), u.h (height));
+            int k = 0;
+            for (float x = 5.0f; x < 119.0f; x += spacing, ++k)
             {
-                g.fillRect (u.x (lo) - 0.5f, u.y (y), 1.0f, u.h (2.5f));
-                g.fillRect (u.x (hi) - 0.5f, u.y (y), 1.0f, u.h (2.5f));
+                float hh = height * fall (x) * (0.55f + 0.45f * hash (k + 91));
+                hh *= 0.9f + 0.1f * std::sin (t * 1.3f + (float) k * 0.9f);
+                if (hh < 0.4f)
+                    continue;
+                g.setColour (lavender.interpolatedWith (Colours::goldLight, 0.3f * bright).withAlpha (0.35f + 0.5f * bright));
+                g.fillRect (u.x (x), u.y (56.0f - hh), std::max (1.0f, u.w (1.0f)), u.h (hh));
             }
+            juce::Path env;
+            env.startNewSubPath (u.x (3.0f), u.y (56.0f - height));
+            for (float x = 4.0f; x < 119.0f; x += 1.0f)
+                env.lineTo (u.x (x), u.y (56.0f - height * fall (x)));
+            g.setColour (Colours::gold.withAlpha (0.55f));
+            g.strokePath (env, juce::PathStrokeType (1.0f));
             break;
         }
     }
@@ -457,7 +467,7 @@ ModuleTile::ModuleTile (ModuleKind k, const juce::String& n, bool fresh)
     : moduleKind (k), name (n), isNew (fresh)
 {
     setTitle (n);
-    if (k != ModuleKind::window)
+    if (k != ModuleKind::window && k != ModuleKind::spaceFilter)
     {
         powerButton = std::make_unique<PowerButton> (n);
         addAndMakeVisible (*powerButton);
@@ -470,6 +480,13 @@ TextDragger& ModuleTile::addControl (const juce::String& caption)
     controls.back()->setRowStyle (true);
     addAndMakeVisible (*controls.back());
     return *controls.back();
+}
+
+PillToggle& ModuleTile::addHeaderToggle (const juce::String& text)
+{
+    headerToggle = std::make_unique<PillToggle> (text, 22.0f, 10.0f);
+    addAndMakeVisible (*headerToggle);
+    return *headerToggle;
 }
 
 VerticalFader& ModuleTile::addFader (const juce::String& caption)
@@ -493,8 +510,12 @@ void ModuleTile::update (const ModuleSettings& s, float time, bool resting)
     t = time;
     rest = resting;
     const bool on = s.isOn (moduleKind);
-    for (auto& c : controls)
-        c->setAlpha (on ? 1.0f : 0.55f);
+    for (size_t i = 0; i < controls.size(); ++i)
+    {
+        // Space's Low and High (its third and fourth rows) rest while its cuts are off.
+        const bool cut = moduleKind == ModuleKind::spaceFilter && i >= 2;
+        controls[i]->setAlpha (on && (! cut || s.spaceFilterOn) ? 1.0f : 0.55f);
+    }
     for (auto& f : faders)
         f->setAlpha (on ? 1.0f : 0.55f);
     for (auto& c : choices)
@@ -504,6 +525,9 @@ void ModuleTile::update (const ModuleSettings& s, float time, bool resting)
 
 juce::Rectangle<float> ModuleTile::visualArea() const
 {
+    // Space has four rows of controls, so its picture is shorter.
+    if (moduleKind == ModuleKind::spaceFilter)
+        return { 14.0f, 40.0f, (float) getWidth() - 28.0f, 34.0f };
     return { 14.0f, 40.0f, (float) getWidth() - 28.0f, 56.0f };
 }
 
@@ -529,7 +553,7 @@ void ModuleTile::paint (juce::Graphics& g)
         g.fillRoundedRectangle (tag, 6.0f);
         drawTrackedText (g, "NEW", tag, tagFont, juce::Justification::centred, Colours::ink);
     }
-    if (powerButton == nullptr)
+    if (powerButton == nullptr && headerToggle == nullptr)
         drawTrackedText (g, "ALWAYS ON", { (float) getWidth() - 110.0f, 6.0f, 96.0f, 30.0f }, Fonts::sans (9.0f, false, 0.16f),
                          juce::Justification::centredRight, Colours::muted);
 
@@ -549,12 +573,18 @@ void ModuleTile::resized()
     const float w = (float) getWidth();
     if (powerButton != nullptr)
         powerButton->setBounds (getWidth() - 44, 4, 32, 32);
+    if (headerToggle != nullptr)
+    {
+        const float tw = headerToggle->preferredWidth();
+        headerToggle->setBounds (juce::Rectangle<float> (w - 14.0f - tw, 9.0f, tw, 22.0f).toNearestInt());
+    }
 
-    float y = 104.0f;
+    const bool compact = moduleKind == ModuleKind::spaceFilter;
+    float y = compact ? 80.0f : 104.0f;
     for (auto& c : controls)
     {
         c->setBounds (juce::Rectangle<float> (14.0f, y, w - 28.0f, 24.0f).toNearestInt());
-        y += 26.0f;
+        y += compact ? 25.0f : 26.0f;
     }
     if (! faders.empty())
     {
@@ -684,10 +714,19 @@ ModulesPanel::ModulesPanel (juce::AudioProcessorValueTreeState& s) : state (s)
             "How fast the beat between your ears pulses. Best heard on headphones");
     attach (binaural.addControl ("Amount"), ParamID::binauralAmount, percent, "How much of the beat to mix in");
 
-    auto& spaceFilter = add (ModuleKind::spaceFilter, "SPACE FILTER", true);
-    power (spaceFilter, ParamID::spaceFilterOn);
-    attach (spaceFilter.addControl ("Low"), ParamID::spaceLow, hz, "Cuts the reverb below this, so the low end stays clear");
-    attach (spaceFilter.addControl ("High"), ParamID::spaceHigh, hz, "Cuts the reverb above this, for a darker space");
+    // The Space reverb: the big Space knob sets its level, this tile everything else.
+    auto& space = add (ModuleKind::spaceFilter, "SPACE", true);
+    {
+        auto& cuts = space.addHeaderToggle ("CUTS");
+        cuts.setTooltip ("Switch the reverb's low and high cuts on or off");
+        buttonAttachments.push_back (std::make_unique<ButtonAttachment> (state, ParamID::spaceFilterOn, cuts));
+    }
+    attach (space.addControl ("Decay"), ParamID::spaceDecay, [] (double v) { return formatSeconds ((float) v); },
+            "How long the reverb rings after the voice stops, up to a minute");
+    attach (space.addControl ("Size"), ParamID::spaceSize, percent,
+            "How big the room is: small and close, or a vast hall where the echoes stand further apart");
+    attach (space.addControl ("Low"), ParamID::spaceLow, hz, "Cuts the reverb below this, so the low end stays clear");
+    attach (space.addControl ("High"), ParamID::spaceHigh, hz, "Cuts the reverb above this, for a darker space");
 
     addAndMakeVisible (resetButton);
     resetButton.setTooltip ("Every module back to how it starts");
@@ -724,6 +763,9 @@ ModuleSettings ModulesPanel::readSettings() const
     s.binauralAmount = value (ParamID::binauralAmount);
     s.spaceLowHz = value (ParamID::spaceLow);
     s.spaceHighHz = value (ParamID::spaceHigh);
+    s.spaceLevel = value (ParamID::space);
+    s.spaceDecaySeconds = value (ParamID::spaceDecay);
+    s.spaceSize = value (ParamID::spaceSize);
     s.onsetsOn = on (ParamID::onsetsOn);
     s.shiftOn = on (ParamID::shiftOn);
     s.smearOn = on (ParamID::smearOn);
@@ -745,7 +787,7 @@ void ModulesPanel::resetAll()
                       ParamID::compressorOn, ParamID::compressor, ParamID::octavesOn, ParamID::octaveDown2, ParamID::octaveDown1,
                       ParamID::octaveRoot, ParamID::octaveUp1, ParamID::octaveUp15, ParamID::octaveUp2,
                       ParamID::binauralOn, ParamID::binauralRate, ParamID::binauralAmount,
-                      ParamID::spaceFilterOn, ParamID::spaceLow, ParamID::spaceHigh })
+                      ParamID::spaceFilterOn, ParamID::spaceLow, ParamID::spaceHigh, ParamID::spaceDecay, ParamID::spaceSize })
     {
         auto* p = state.getParameter (id);
         p->beginChangeGesture();
@@ -783,7 +825,7 @@ void ModulesPanel::paint (juce::Graphics& g)
     drawTrackedText (g, "MODULES", { 0.0f, 0.0f, 120.0f, headingHeight }, capFont, juce::Justification::centredLeft, Colours::gold);
     const float x = trackedTextWidth ("MODULES", capFont) + 18.0f;
     const juce::String note = bloom ? "How Bloom shapes the sound. Tap a light to switch a module on or off."
-                                    : "Most modules shape Bloom and rest while Grain plays. Binaural and Space filter work in both.";
+                                    : "Most modules shape Bloom and rest while Grain plays. Binaural and Space work in both.";
     drawTrackedText (g, note, { x, 0.0f, w - x - 140.0f, headingHeight }, Fonts::sans (12.0f), juce::Justification::centredLeft, Colours::muted);
 }
 

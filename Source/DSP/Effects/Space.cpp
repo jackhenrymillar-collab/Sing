@@ -12,18 +12,32 @@ constexpr float lowCutHz = 150.0f;
 constexpr float maxPreDelayMs = 40.0f;
 constexpr float diffusion = 0.85f;
 constexpr float modulation = 0.5f;
+constexpr float maxWet = 1.5f;
 } // namespace
 
-Space::Mapping Space::mapping (float a) noexcept
+float Space::wetGainFor (float l) noexcept
+{
+    l = std::clamp (l, 0.0f, 1.0f);
+    return maxWet * l * l;
+}
+
+float Space::preDelayMsFor (float sz) noexcept
+{
+    // The old knob's pre-delay ran 10 to 40 ms as its size ran 0.35 to 1.
+    return 10.0f + (maxPreDelayMs - 10.0f) * std::clamp ((sz - 0.35f) / 0.65f, 0.0f, 1.0f);
+}
+
+Space::Legacy Space::legacy (float a) noexcept
 {
     a = std::clamp (a, 0.0f, 1.0f);
     constexpr float halfPi = 1.57079632679f;
-    Mapping m {};
+    Legacy m {};
     m.size = 0.35f + 0.65f * a;
     m.decaySeconds = 2.0f * std::pow (10.0f, a);           // 2 s to 20 s
     m.preDelayMs = 10.0f + 30.0f * a;
-    m.wet = 0.8f * std::sin (a * halfPi);                  // rises fast, then levels off
-    m.dry = 1.0f - 0.4f * a * a;                           // the voice stays present
+    m.wet = 0.8f * std::sin (a * halfPi);                  // rose fast, then levelled off
+    m.dry = 1.0f - 0.4f * a * a;                           // and turned the voice down a little
+    m.level = std::min (1.0f, std::sqrt (m.wet / m.dry / maxWet));
     return m;
 }
 
@@ -31,11 +45,11 @@ void Space::prepare (double sampleRate, int maxBlockSize)
 {
     rate = sampleRate > 0.0 ? sampleRate : 48000.0;
     aurora.prepare (rate);
+    updateReverb();
     const auto maxDelay = (std::size_t) reverb::msToSamples (maxPreDelayMs + 2.0f, rate) + 4;
     preDelayL.prepare (maxDelay);
     preDelayR.prepare (maxDelay);
     wetGain.prepare (rate, 50.0f);
-    dryGain.prepare (rate, 50.0f);
     preDelay.prepare (rate, 200.0f);
     lowCoeff = reverb::OnePoleLowpass::coefficientFor (lowCutHz, rate);
     const auto n = (size_t) std::max (1, maxBlockSize);
@@ -58,11 +72,9 @@ void Space::reset()
     lowNow = lowTarget;
     highNow = highTarget;
     updateFilter (0);
-    const auto m = mapping (amount);
-    wetGain.snapTo (amount > 0.0f ? m.wet : 0.0f);
-    dryGain.snapTo (amount > 0.0f ? m.dry : 1.0f);
-    preDelay.snapTo (reverb::msToSamples (m.preDelayMs, rate));
-    running = amount > 0.0f;
+    wetGain.snapTo (wetGainFor (level));
+    preDelay.snapTo (reverb::msToSamples (preDelayMsFor (size), rate));
+    running = level > 0.0f;
     silentSamples = 0;
 }
 
@@ -85,25 +97,15 @@ void Space::updateFilter (int samples) noexcept
     wetHighR.setLowPass (std::min ((double) highNow, top), rate);
 }
 
-void Space::setAmount (float a) noexcept
+void Space::setLevel (float l) noexcept
 {
-    a = std::clamp (a, 0.0f, 1.0f);
-    if (a == amount)
+    l = std::clamp (l, 0.0f, 1.0f);
+    if (l == level)
         return;
-    amount = a;
-    const auto m = mapping (a);
-    wetGain.setTarget (a > 0.0f ? m.wet : 0.0f);
-    dryGain.setTarget (a > 0.0f ? m.dry : 1.0f);
-    preDelay.setTarget (reverb::msToSamples (m.preDelayMs, rate));
+    level = l;
+    wetGain.setTarget (wetGainFor (l));
 
-    reverb::MachineParams p;
-    p.param1 = m.size;
-    p.param2 = diffusion;
-    p.mod = modulation;
-    p.decaySeconds = m.decaySeconds;
-    aurora.setParams (p);
-
-    if (a > 0.0f && ! running)
+    if (l > 0.0f && ! running)
     {
         // Start clean: the reverb was stopped and its old tail is long gone.
         aurora.reset();
@@ -112,6 +114,35 @@ void Space::setAmount (float a) noexcept
         running = true;
         silentSamples = 0;
     }
+}
+
+void Space::setDecay (float seconds) noexcept
+{
+    seconds = std::clamp (seconds, minDecaySeconds, maxDecaySeconds);
+    if (seconds == decaySeconds)
+        return;
+    decaySeconds = seconds;
+    updateReverb();
+}
+
+void Space::setSize (float s) noexcept
+{
+    s = std::clamp (s, 0.0f, 1.0f);
+    if (s == size)
+        return;
+    size = s;
+    preDelay.setTarget (reverb::msToSamples (preDelayMsFor (s), rate));
+    updateReverb();
+}
+
+void Space::updateReverb() noexcept
+{
+    reverb::MachineParams p;
+    p.param1 = size;
+    p.param2 = diffusion;
+    p.mod = modulation;
+    p.decaySeconds = decaySeconds;
+    aurora.setParams (p);
 }
 
 void Space::process (float* left, float* right, int numSamples) noexcept
@@ -147,23 +178,22 @@ void Space::process (float* left, float* right, int numSamples) noexcept
         float loudest = 0.0f;
         for (int i = 0; i < n; ++i)
         {
-            const float w = wetGain.next(), g = dryGain.next();
+            const float w = wetGain.next();
             const float wl = wetL[(size_t) i] * w, wr = wetR[(size_t) i] * w;
-            l[i] = l[i] * g + wl;
-            r[i] = r[i] * g + wr;
+            l[i] += wl;
+            r[i] += wr;
             loudest = std::max (loudest, std::max (std::abs (wl), std::abs (wr)));
         }
         done += n;
 
         // Turned off: once the wet has faded to nothing (-80 dB), stop running.
-        if (amount == 0.0f && wetGain.getCurrent() < 1.0e-4f && loudest < 1.0e-5f)
+        if (level == 0.0f && wetGain.getCurrent() < 1.0e-4f && loudest < 1.0e-5f)
         {
             silentSamples += n;
             if (silentSamples > (int) (0.02 * rate))
             {
                 running = false;
                 wetGain.snapTo (0.0f);
-                dryGain.snapTo (1.0f);
                 return;
             }
         }

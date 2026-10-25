@@ -1,5 +1,7 @@
 #include "Parameters.h"
 
+#include "Effects/Space.h"
+
 namespace sing
 {
 
@@ -177,6 +179,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::spaceFilterOn, v }, "Space Filter On", false));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::spaceLow, v }, "Space Low Cut", skewed (20.0f, 2000.0f, 200.0f), 150.0f, withText (formatHz)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::spaceHigh, v }, "Space High Cut", skewed (1000.0f, 20000.0f, 6000.0f), 9000.0f, withText (formatHz)));
+    // Space's Decay and Size, split from the Space knob. The defaults are the old knob's
+    // middle; older sessions get theirs from upgradeOldSpace.
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::spaceDecay, v }, "Space Decay",
+                                                       skewed (Space::minDecaySeconds, Space::maxDecaySeconds, 6.0f), 6.3f, withText (formatSeconds)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::spaceSize, v }, "Space Size", Range { 0.0f, 100.0f, 0.1f }, 67.5f, withText (formatPercent)));
     // Also the host's bypass switch (see SingProcessor::getBypassParameter). Clicking the evening star toggles it.
     // Movement. Every orbit starts at 0, so sessions from before it sound the same.
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::orbitStretch, v }, "Stretch Orbit", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatOrbit)));
@@ -194,6 +201,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::bypass, v }, "Bypass", false));
 
     return layout;
+}
+
+void upgradeOldSpace (std::map<juce::String, float>& values)
+{
+    if (values.count (ParamID::spaceDecay) > 0)
+        return;
+    const auto it = values.find (ParamID::space);
+    const float amount = it != values.end() ? it->second * 0.01f : 0.0f;
+    const auto old = Space::legacy (amount);
+    values[ParamID::spaceDecay] = old.decaySeconds;
+    values[ParamID::spaceSize] = 100.0f * old.size;
+    if (it != values.end())
+        it->second = amount > 0.0f ? 100.0f * old.level : 0.0f;
 }
 
 } // namespace sing

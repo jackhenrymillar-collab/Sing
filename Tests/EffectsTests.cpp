@@ -106,33 +106,77 @@ TEST_CASE ("Air: breath follows the voice")
     CHECK (finite (l));
 }
 
-TEST_CASE ("Space: at 0 the signal passes untouched, and the reverb stops")
+TEST_CASE ("Space: Level 0 passes the signal untouched, and the reverb stops")
 {
     auto l = voice (48000), r = voice (48000);
     const auto refL = l;
     Space space;
     space.prepare (sr, 512);
-    space.setAmount (0.0f);
+    space.setLevel (0.0f);
     runBlocks (48000, 256, [&] (int i, int n) { space.process (l.data() + i, r.data() + i, n); });
     CHECK (l == refL);
     CHECK_FALSE (space.isRunning());
 
     // Up, then back down: once the wet has faded the reverb stops again.
-    space.setAmount (0.5f);
+    space.setLevel (0.5f);
     CHECK (space.isRunning());
     runBlocks (24000, 256, [&] (int i, int n) { space.process (l.data() + i, r.data() + i, n); });
-    space.setAmount (0.0f);
+    space.setLevel (0.0f);
     runBlocks (24000, 256, [&] (int i, int n) { space.process (l.data() + 24000 + i, r.data() + 24000 + i, n); });
     CHECK (space.isRunning());   // still fading out
     runBlocks (48000, 256, [&] (int i, int n) { space.process (l.data() + i, r.data() + i, n); });
     CHECK_FALSE (space.isRunning());
 }
 
-TEST_CASE ("Space: the knob sets one long, lush tail")
+TEST_CASE ("Space: Decay sets how long the tail rings, whatever the Level")
 {
     // A short burst of voice, then silence: measure how long the tail rings.
     const int n = 12 * 48000;
-    for (const float amount : { 0.25f, 0.5f, 1.0f })
+    for (const float decay : { 1.5f, 4.0f, 12.0f })
+        for (const float level : { 0.3f, 1.0f })
+        {
+            std::vector<float> l ((size_t) n, 0.0f), r ((size_t) n, 0.0f);
+            const auto burst = voice (24000);
+            std::copy (burst.begin(), burst.end(), l.begin());
+            std::copy (burst.begin(), burst.end(), r.begin());
+            Space space;
+            space.prepare (sr, 512);
+            space.setDecay (decay);
+            space.setSize (0.7f);
+            space.setLevel (level);
+            space.reset();
+            runBlocks (n, 512, [&] (int i, int m) { space.process (l.data() + i, r.data() + i, m); });
+
+            // Decay rate over the second after the burst has passed, extrapolated to 60 dB
+            // (a short window, so the shortest decay is still well above the noise floor).
+            const double a = db (rms (l.data() + 48000 + 12000, 12000));
+            const double b = db (rms (l.data() + 48000 + 36000, 12000));
+            const double rt60 = 60.0 / std::max (1.0e-3, (a - b) / 0.5);
+            double corr = 0.0, ll = 0.0, rr = 0.0;
+            for (int i = 48000; i < 3 * 48000; ++i)
+            {
+                corr += (double) l[(size_t) i] * r[(size_t) i];
+                ll += (double) l[(size_t) i] * l[(size_t) i];
+                rr += (double) r[(size_t) i] * r[(size_t) i];
+            }
+            corr /= std::sqrt (ll * rr);
+            std::printf ("  Space decay %.1f s, level %.1f: measured %.1f s, tail correlation %.2f, peak %.2f\n", decay, level, rt60,
+                         corr, *std::max_element (l.begin(), l.end()));
+
+            INFO ("Decay " << decay << " level " << level);
+            CHECK (rt60 > 0.6 * decay);
+            CHECK (rt60 < 1.6 * decay);
+            CHECK (corr < 0.5);   // wide, even from a mono voice
+            CHECK (finite (l));
+            CHECK (*std::max_element (l.begin(), l.end()) < 1.0f);
+        }
+}
+
+TEST_CASE ("Space: Level is the reverb's volume alone")
+{
+    // The dry voice is never turned down, and the tail scales with Level's gain.
+    const int n = 3 * 48000;
+    const auto run = [&] (float level, bool tailOnly)
     {
         std::vector<float> l ((size_t) n, 0.0f), r ((size_t) n, 0.0f);
         const auto burst = voice (24000);
@@ -140,32 +184,29 @@ TEST_CASE ("Space: the knob sets one long, lush tail")
         std::copy (burst.begin(), burst.end(), r.begin());
         Space space;
         space.prepare (sr, 512);
-        space.setAmount (amount);
+        space.setDecay (5.0f);
+        space.setLevel (level);
         space.reset();
         runBlocks (n, 512, [&] (int i, int m) { space.process (l.data() + i, r.data() + i, m); });
+        return tailOnly ? rms (l.data() + 48000, 48000) : rms (l.data(), 960);
+    };
+    // The first 20 ms is all dry (the reverb waits 25 ms at this Size): Level leaves it be.
+    CHECK (std::abs (run (1.0f, false) - run (0.0f, false)) < 1.0e-6);
+    const double quarter = db (run (0.5f, true)), full = db (run (1.0f, true));
+    std::printf ("  Space level 0.5 vs 1: tail %.1f dB vs %.1f dB\n", quarter, full);
+    CHECK (std::abs ((full - quarter) - 20.0 * std::log10 (Space::wetGainFor (1.0f) / Space::wetGainFor (0.5f))) < 0.5);
+}
 
-        // Decay rate between 1 and 3 seconds after the burst, extrapolated to 60 dB.
-        const double a = db (rms (l.data() + 48000 + 24000, 24000));
-        const double b = db (rms (l.data() + 3 * 48000, 24000));
-        const double rt60 = 60.0 / std::max (1.0e-3, (a - b) / 1.75);
-        const auto m = Space::mapping (amount);
-        double corr = 0.0, ll = 0.0, rr = 0.0;
-        for (int i = 48000; i < 3 * 48000; ++i)
-        {
-            corr += (double) l[(size_t) i] * r[(size_t) i];
-            ll += (double) l[(size_t) i] * l[(size_t) i];
-            rr += (double) r[(size_t) i] * r[(size_t) i];
-        }
-        corr /= std::sqrt (ll * rr);
-        std::printf ("  Space %.2f: decay %.1f s (set %.1f s), tail correlation %.2f, peak %.2f\n", amount, rt60,
-                     m.decaySeconds, corr, *std::max_element (l.begin(), l.end()));
-
-        INFO ("Space " << amount);
-        CHECK (rt60 > 0.6 * m.decaySeconds);
-        CHECK (rt60 < 1.6 * m.decaySeconds);
-        CHECK (corr < 0.5);   // wide, even from a mono voice
-        CHECK (finite (l));
-        CHECK (*std::max_element (l.begin(), l.end()) < 1.0f);
+TEST_CASE ("Space: an old one-knob setting keeps its reverb-to-voice balance")
+{
+    for (const float a : { 0.1f, 0.35f, 0.7f, 1.0f })
+    {
+        const auto old = Space::legacy (a);
+        INFO ("Old Space " << a);
+        CHECK (std::abs (Space::wetGainFor (old.level) - old.wet / old.dry) < 1.0e-4f);
+        CHECK (std::abs (Space::preDelayMsFor (old.size) - old.preDelayMs) < 1.0e-3f);
+        CHECK (old.decaySeconds >= Space::minDecaySeconds);
+        CHECK (old.decaySeconds <= Space::maxDecaySeconds);
     }
 }
 
@@ -184,7 +225,7 @@ TEST_CASE ("Space: its filter cuts lows and highs from the reverb only")
         }
         Space space;
         space.prepare (sr, 512);
-        space.setAmount (0.6f);
+        space.setLevel (0.75f);
         space.setFilter (filtered, 800.0f, 3000.0f);
         space.reset();
         runBlocks (n, 512, [&] (int i, int m) { space.process (l.data() + i, r.data() + i, m); });

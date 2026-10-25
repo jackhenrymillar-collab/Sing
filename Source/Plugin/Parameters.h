@@ -2,6 +2,8 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <map>
+
 namespace sing
 {
 
@@ -59,6 +61,10 @@ namespace ParamID
     inline constexpr auto spaceFilterOn  = "spacefilteron";
     inline constexpr auto spaceLow       = "spacelow";
     inline constexpr auto spaceHigh      = "spacehigh";
+    // Space's own Decay and Size. Before these, the Space knob set the reverb's length and
+    // size too; now it is the reverb's level alone.
+    inline constexpr auto spaceDecay     = "spacedecay";
+    inline constexpr auto spaceSize      = "spacesize";
     // Movement: an orbit for each big knob that can move, Wander for the loop, and the
     // strip that sets the shape and speed for all of them.
     inline constexpr auto orbitStretch   = "orbitstretch";
@@ -91,6 +97,11 @@ juce::StringArray moveBarNames();
 float moveBarsAt (int index);
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
+// Settings saved before Space had its own Decay and Size (no spacedecay in them): sets
+// Decay, Size and Level to sound as the old one-knob Space did. Leaves anything newer as
+// it is. Values are in parameter units, keyed by ID.
+void upgradeOldSpace (std::map<juce::String, float>& values);
 
 // Text for the panel and the host.
 juce::String formatSeconds (float seconds);

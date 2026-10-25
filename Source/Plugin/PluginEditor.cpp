@@ -229,7 +229,7 @@ SingPanel::SingPanel (SingProcessor& p)
     knobs[spread].setTooltip ("Up to seven detuned copies across the stereo field: one singer becomes a choir");
     knobs[formant].setTooltip ("Moves the vowel's character: down is larger and darker, up is smaller and glassier");
     knobs[air].setTooltip ("A gentle lift at the top, with a soft breath that follows the voice");
-    knobs[space].setTooltip ("A long reverb: from a small room to a huge wash that rings for 20 s");
+    knobs[space].setTooltip ("How loud the reverb is. Set its Decay, Size and cuts in the Space tile below");
 
     // Orbits: the knobs that can move.
     for (auto [k, id] : { std::pair { stretch, ParamID::orbitStretch }, std::pair { spread, ParamID::orbitSpread },

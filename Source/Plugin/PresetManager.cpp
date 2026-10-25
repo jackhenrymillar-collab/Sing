@@ -25,7 +25,7 @@ namespace
     // The four presets from the mockup, two for Bloom and one that moves. Their voices are generated
     // stand-ins until the recorded factory voices exist.
     constexpr FactoryPreset kFactory[] = {
-        //  name            voice                      attack release stretch spread formant  start length fade  dir engine air    space
+        //  name            voice                      attack release stretch spread formant  start length fade  dir engine air    space (old one knob)
         { "Hollow Choir", PlaceholderVowel::ooh,     2.4f,  7.5f,  68.0f, 35.0f, -2.0f,   30.0f, 40.0f, 28.0f, 0,  0,     20.0f, 35.0f },
         { "Distant Ah",   PlaceholderVowel::ah,      3.8f,  9.0f,  82.0f, 50.0f, -4.0f,   22.0f, 36.0f, 35.0f, 0,  0,     15.0f, 55.0f },
         { "Glass Hum",    PlaceholderVowel::hum,     1.2f,  6.0f,  45.0f, 28.0f,  2.0f,   40.0f, 46.0f, 20.0f, 0,  0,     35.0f, 25.0f },
@@ -68,6 +68,7 @@ PresetManager::PresetManager (juce::AudioProcessorValueTreeState& s,
                      { ParamID::orbitSpread,  f.orbitSpread },
                      { ParamID::orbitFormant, f.orbitFormant },
                      { ParamID::wander,       f.wander } };
+        upgradeOldSpace (p.values);   // the table holds the old one-knob Space
         factory.push_back (std::move (p));
     }
 
@@ -220,6 +221,7 @@ bool PresetManager::readPresetFile (const juce::File& file, Preset& out, bool wi
     out.values.clear();
     for (auto* p : xml->getChildWithTagNameIterator ("PARAM"))
         out.values[p->getStringAttribute ("id")] = static_cast<float> (p->getDoubleAttribute ("value"));
+    upgradeOldSpace (out.values);
 
     if (withVoice && voiceOut != nullptr)
         if (auto* v = xml->getChildByName ("VOICE"))
