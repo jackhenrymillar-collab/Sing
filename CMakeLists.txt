@@ -35,6 +35,7 @@ add_library (SingDSP STATIC
     Source/DSP/Stretch/StretchEngine.cpp
     Source/DSP/Stretch/GranularEngine.cpp
     Source/DSP/Voice/FormantShifter.cpp
+    Source/DSP/Voice/PlaceholderSources.cpp
     Source/DSP/Voice/PlaceholderVoices.cpp
     Source/DSP/Voice/SingSynth.cpp
     Source/DSP/Voice/SingVoice.cpp

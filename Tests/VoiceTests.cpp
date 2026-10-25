@@ -152,6 +152,45 @@ TEST_CASE ("The moving placeholder voices are pitched where they say, and change
     CHECK (12.0f * std::log2 (early.hz / late.hz) > 1.2f);
 }
 
+TEST_CASE ("The synth sources move their filter, and the instruments behave like theirs")
+{
+    // How bright a stretch of sound is: the share of its energy above 1.5 kHz, from the
+    // energy of its first difference (a gentle high-pass) against its own.
+    auto brightness = [] (const std::vector<float>& x, double from, double to)
+    {
+        double e = 0.0, d = 0.0;
+        for (int i = (int) (from * sr) + 1; i < (int) (to * sr); ++i)
+        {
+            e += (double) x[(size_t) i] * x[(size_t) i];
+            const double diff = (double) x[(size_t) i] - x[(size_t) i - 1];
+            d += diff * diff;
+        }
+        return d / std::max (e, 1.0e-12);
+    };
+    auto rms = [] (const std::vector<float>& x, double from, double to)
+    {
+        double sum = 0.0;
+        const int a = (int) (from * sr), b = (int) (to * sr);
+        for (int i = a; i < b; ++i)
+            sum += (double) x[(size_t) i] * x[(size_t) i];
+        return std::sqrt (sum / (b - a));
+    };
+
+    // The saw's filter is open in the middle of the take and closed at the start.
+    const auto saw = makePlaceholderVoice (PlaceholderVowel::sweepingSaw, sr, 8.0f);
+    CHECK (brightness (saw.samples, 3.5, 4.5) > 4.0 * brightness (saw.samples, 0.3, 0.8));
+
+    // The morph ends as a square under an open filter, far brighter than the triangle it starts as.
+    const auto morph = makePlaceholderVoice (PlaceholderVowel::morphPad, sr, 8.0f);
+    CHECK (brightness (morph.samples, 6.8, 7.3) > 4.0 * brightness (morph.samples, 1.0, 1.5));
+
+    // A piano note dies away; an organ holds.
+    const auto piano = makePlaceholderVoice (PlaceholderVowel::grandPiano, sr, 8.0f);
+    CHECK (rms (piano.samples, 0.0, 0.5) > 4.0 * rms (piano.samples, 6.5, 7.0));
+    const auto organ = makePlaceholderVoice (PlaceholderVowel::churchOrgan, sr, 8.0f);
+    CHECK (rms (organ.samples, 6.5, 7.0) > 0.5 * rms (organ.samples, 0.5, 1.0));
+}
+
 TEST_CASE ("Pitch detection calls breaths and noise unpitched")
 {
     const auto breath = makePlaceholderVoice (PlaceholderVowel::breath, sr, 3.0f);

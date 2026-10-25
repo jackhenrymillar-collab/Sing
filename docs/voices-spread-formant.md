@@ -56,7 +56,25 @@ Their presets leave Air off, since Air adds a breath layer:
 
 Their presets use gentler Stretch (15 to 40 on Grain) than the first ones, because Stretch
 slows reading exponentially (about 1/100 speed at 80) and the movement would otherwise freeze.
-New voices are levelled by loudness (about -16 dB RMS) rather than peak. Note names follow Logic and Ableton, where
+New voices are levelled by loudness (about -16 dB RMS) rather than peak.
+
+Twenty more are synths and instruments, made in `PlaceholderSources.cpp`. Each is a bank of
+sine partials described block by block, so filters and waveshapes are worked out per harmonic:
+a moving cutoff or shape never aliases or clicks, and there is no noise in any of them.
+
+Synths (the filter or the waveshape moves): Sweeping Saw (detuned saws, ladder filter opening
+and closing), PWM Strings (sweeping pulse widths), Morph Pad (triangle to saw to square),
+Wobble Bass (resonant filter, LFO speeding up), Sync Sweep (a peak riding the harmonics, like
+hard sync), Supersaw Rise (seven saws spreading as the filter climbs), FM Morph (two-operator
+FM, index rising and falling), Wavefold Drone (sin (g sin x), folding harder and softer),
+Flanged Saw (sweeping comb) and Talking Square (two moving resonances, "ah ee oo ah").
+
+Instruments: Cello (two bows, body resonances, vibrato), Violin Section (six players), Flute,
+Clarinet (odd harmonics, crescendo), French Horn (brightens at its loudest), Church Organ
+(stops drawn one by one), Grand Piano (three strings, stretched partials, two-stage decay),
+Vibraphone (1 : 4 : 10 bar, tremolo slowing), Harp (plucked twice) and Accordion (musette
+reeds, bellows turning at 4 s). Their presets on struck and plucked sounds use a near-zero
+Attack so the strike is heard. Note names follow Logic and Ableton, where
 middle C is C3. They store only their id in presets, so swapping
 in the recordings later is one change in `PlaceholderVoices.cpp` and `VoiceData`.
 
