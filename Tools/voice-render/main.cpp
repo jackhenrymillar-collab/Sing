@@ -13,6 +13,8 @@
 //   --spread K         Spread knob, 0 to 1. Default 0
 //   --seconds T        how long the notes are held. Default 8
 //   --tail T           release tail after. Default 2
+//   --glide MS         Glide time. Default 0
+//   --next N           halfway through, release the notes and play N instead (to hear Glide)
 
 #include "Voice/SingSynth.h"
 #include "Voice/VoiceAnalysis.h"
@@ -43,6 +45,7 @@ int main (int argc, char** argv)
     }
 
     std::vector<int> notes;
+    int nextNote = -1;
     float rootNote = -1.0f, seconds = 8.0f, tail = 2.0f, window = 0.68f;
     bool bloom = false;
     SynthSettings settings;
@@ -66,6 +69,8 @@ int main (int argc, char** argv)
         else if (k == "--spread") v.spread = std::stof (val);
         else if (k == "--seconds") seconds = std::stof (val);
         else if (k == "--tail") tail = std::stof (val);
+        else if (k == "--glide") v.glideSeconds = std::stof (val) * 0.001f;
+        else if (k == "--next") nextNote = std::stoi (val);
         else { std::fprintf (stderr, "unknown option %s\n", k.c_str()); return 1; }
     }
     if (notes.empty())
@@ -107,9 +112,17 @@ int main (int argc, char** argv)
         synth.noteOn (note, 0.8f);
 
     const auto held = (size_t) (seconds * rate), total = (size_t) ((seconds + tail) * rate);
+    const auto half = nextNote >= 0 ? held / 2 : total + 1;
     std::vector<float> l (total), r (total);
     for (size_t pos = 0; pos < total; pos += block)
     {
+        if (pos <= half && pos + block > half)
+        {
+            for (int note : notes)
+                synth.noteOff (note);
+            notes.assign (1, nextNote);
+            synth.noteOn (nextNote, 0.8f);
+        }
         if (pos <= held && pos + block > held)
             for (int note : notes)
                 synth.noteOff (note);
