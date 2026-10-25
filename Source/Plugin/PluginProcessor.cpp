@@ -164,7 +164,13 @@ void SingProcessor::rebuildLoop()
     loop.start = from + juce::jlimit (0, length - minLoop, juce::roundToInt (value (ParamID::loopStart) * 0.01f * (float) length));
     loop.length = juce::jlimit (minLoop, from + length - loop.start, juce::roundToInt (value (ParamID::loopLength) * 0.01f * (float) length));
     loop.fade = juce::roundToInt (value (ParamID::loopFade) * 0.01f * (float) loop.length * 0.5f);
-    loop.direction = static_cast<LoopDirection> (juce::jlimit (0, 2, juce::roundToInt (value (ParamID::direction))));
+    loop.direction = static_cast<LoopDirection> (juce::jlimit (0, 3, juce::roundToInt (value (ParamID::direction))));
+    // From start: no loop, so everything from Start to the end of the voice.
+    if (loop.direction == LoopDirection::fromStart)
+    {
+        loop.length = from + length - loop.start;
+        loop.fade = 0;
+    }
     loop.pitchPeriod = v->isPitched() ? (float) (v->getSampleRate() / v->rootHz()) : 0.0f;
     loop.pitchTrack = v->getPitchTrack();
     loop.analyseForBloom = juce::roundToInt (value (ParamID::engine)) == 1;

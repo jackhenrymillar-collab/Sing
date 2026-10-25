@@ -85,9 +85,15 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
 
     // Frames every eighth of a window, fewer for very long loops. The hop is not a whole
     // number of samples so the frames tile the loop exactly.
+    // With no loop (From start) nothing wraps: frame f's window starts at f * hop, so the
+    // first frame begins exactly at Start and the last one ends at the end of the voice.
+    const bool wraps = source.wraps();
+    const double span = wraps ? (double) length : (double) std::max (0, length - a->size);
     const double hopTarget = std::max ((double) a->size / 8.0, (double) length / maxFrames);
-    a->frames = std::max (1, (int) std::lround ((double) length / hopTarget));
-    a->hopSamples = (double) length / a->frames;
+    a->frames = wraps ? std::max (1, (int) std::lround (span / hopTarget))
+                      : 1 + std::max (0, (int) std::lround (span / hopTarget));
+    a->hopSamples = wraps ? span / a->frames : (a->frames > 1 ? span / (a->frames - 1) : 1.0);
+    a->wrapped = wraps;
 
     const int n = a->size, bins = a->bins;
     std::vector<float> window ((size_t) n);
@@ -126,13 +132,20 @@ std::shared_ptr<const BloomAnalysis> BloomAnalysis::build (const LoopSource& sou
     a->locked = lockHarmonics;
     for (int f = 0; f < a->frames; ++f)
     {
-        // The window is centred on the frame's position, reading round the loop.
-        const long centre = std::lround (f * a->hopSamples);
+        // The window is centred on the frame's position, reading round the loop; or with no
+        // loop, starts at it.
+        const long at = std::lround (f * a->hopSamples);
         for (int i = 0; i < n; ++i)
         {
-            long idx = (centre - n / 2 + i) % length;
-            if (idx < 0)
-                idx += length;
+            long idx;
+            if (wraps)
+            {
+                idx = (at - n / 2 + i) % length;
+                if (idx < 0)
+                    idx += length;
+            }
+            else
+                idx = std::min<long> (at + i, length - 1);
             float s = 0.0f;
             for (int ch = 0; ch < channels; ++ch)
                 s += source.channel (ch)[idx];
@@ -375,6 +388,8 @@ std::vector<BloomAnalysis::Onset> BloomAnalysis::findOnsets (const LoopSource& s
             long idx = (centre - n / 2 + i) % length;
             if (idx < 0)
                 idx += length;
+            if (! source.wraps())
+                idx = std::clamp<long> (centre - n / 2 + i, 0, length - 1);   // no loop: the ends hold
             float v = 0.0f;
             for (int ch = 0; ch < channels; ++ch)
                 v += source.channel (ch)[idx];
@@ -402,7 +417,7 @@ std::vector<BloomAnalysis::Onset> BloomAnalysis::findOnsets (const LoopSource& s
     std::vector<float> flux ((size_t) count);
     for (int t = 0; t < count; ++t)
     {
-        const int before = (t - 2 + count) % count;
+        const int before = source.wraps() ? (t - 2 + count) % count : std::max (0, t - 2);
         float rise = 0.0f;
         for (int b = 0; b < bands; ++b)
             rise += std::max (0.0f, level[(size_t) t * bands + (size_t) b] - level[(size_t) before * bands + (size_t) b]);

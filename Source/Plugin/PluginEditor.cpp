@@ -161,7 +161,7 @@ SingPanel::SingPanel (SingProcessor& p)
 
     // Loop settings
     const auto names = directionNames();
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < (int) directionButtons.size(); ++i)
     {
         auto& b = directionButtons[(size_t) i];
         b = std::make_unique<PillToggle> (names[i].toUpperCase(), 36.0f, 11.0f);
@@ -174,9 +174,17 @@ SingPanel::SingPanel (SingProcessor& p)
         [this] (float value)
         {
             const int d = juce::roundToInt (value);
-            for (int i = 0; i < 3; ++i)
+            for (int i = 0; i < (int) directionButtons.size(); ++i)
                 directionButtons[(size_t) i]->setToggleState (i == d, juce::dontSendNotification);
+            // From start has no loop: only Start applies, so Length and Fade step aside.
+            const bool loops = d != (int) LoopDirection::fromStart;
+            loopLength.setVisible (loops);
+            loopFade.setVisible (loops);
+            resized();
         });
+    directionButtons[(size_t) LoopDirection::fromStart]->setTooltip (
+        "No loop: each note plays on from Start and holds at the end of the voice. Nothing after Start "
+        "blends back in, and Bloom's Window can grow to everything after Start");
 
     for (auto* d : { &loopStart, &loopLength, &loopFade })
         addAndMakeVisible (d);
@@ -704,6 +712,8 @@ void SingPanel::resized()
     for (auto [d, widest] : { std::pair { &loopFade, juce::String ("100%") }, std::pair { &loopLength, juce::String ("60.00 s") },
                               std::pair { &loopStart, juce::String ("60.00 s") }, std::pair { &wanderDragger, juce::String ("100%") } })
     {
+        if (! d->isVisible() && (d == &loopFade || d == &loopLength))
+            continue;
         const float w = d->preferredWidth (widest);
         d->setBounds (juce::Rectangle<float> (rx - w, loopY, w, 36.0f).toNearestInt());
         rx -= w + 28.0f;
