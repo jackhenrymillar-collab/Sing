@@ -150,10 +150,15 @@ void SingVoice::start (const LoopSource& src, int midiNote, float velocity, cons
 {
     stop();
     source = &src;
-    voiceSettings = settings;
+    baseSettings = voiceSettings = settings;
     note = midiNote;
     velocityGain = 0.35f + 0.65f * std::clamp (velocity, 0.0f, 1.0f);
     seedBase = seed != 0 ? seed : 1u;
+
+    // This note's own path through the movement, used when Each note is on.
+    moveSeed = movement::hash (seedBase ^ 0xa5a5f00du);
+    movePhase = (double) movement::hash (moveSeed) / 4294967296.0;
+    wanderApplied = 0.0;
 
     const float target = targetSemitones();
     gliding = glide && settings.glideSeconds > 0.0f && std::abs (glideFromSemitones - target) > 1.0e-3f;
@@ -164,23 +169,107 @@ void SingVoice::start (const LoopSource& src, int midiNote, float velocity, cons
     killed = false;
     released = false;
     envelope.start (settings.attackSeconds);
+    updateMovement (0, true);
 
     bloomNote = settings.mode == StretchMode::bloom && BloomVoice::canPlay (src);
     if (bloomNote)
     {
         std::array<CopyShape, (size_t) maxCopies> shapes {};
-        const float norm = copyShapes (settings.spread, shapes);
+        const float norm = copyShapes (voiceSettings.spread, shapes);
         bloom.setParameters (bloomParameters (shapes, norm));
         // Every Bloom note buffer in use (only with very long windows): play granular.
         bloomNote = bloom.start (src, 0.0, seedBase * 2654435761u, (float) (seedBase % 97u) / 97.0f);
     }
     if (bloomNote)
+    {
+        applyWander (true);
         return;
+    }
 
     for (int i = 0; i < maxCopies; ++i)
-        if (copyShape (i, settings.spread).weight > 0.0f)
+        if (copyShape (i, voiceSettings.spread).weight > 0.0f)
             startCopy (i);
+    applyWander (true);
     primeShifter();
+}
+
+void SingVoice::setSettings (const VoiceSettings& settings) noexcept
+{
+    baseSettings = settings;
+    refreshMoved();
+}
+
+void SingVoice::refreshMoved() noexcept
+{
+    voiceSettings = baseSettings;
+    const auto& o = moveOffset;
+    voiceSettings.stretch = std::clamp (baseSettings.stretch + o[moveStretch], 0.0f, 1.0f);
+    voiceSettings.spread = std::clamp (baseSettings.spread + o[moveSpread], 0.0f, 1.0f);
+    voiceSettings.formantSemitones = std::clamp (baseSettings.formantSemitones + 24.0f * o[moveFormant], -12.0f, 12.0f);
+}
+
+void SingVoice::updateMovement (int numSamples, bool jump) noexcept
+{
+    const auto& m = baseSettings.movement;
+    const uint32_t seed = m.eachNote ? moveSeed : movement::sharedSeed;
+    const double cycles = moveClock + (m.eachNote ? movePhase : 0.0);
+    moveClock += m.cyclesPerSample * (double) numSamples;
+
+    const auto moved = [&] (int target, float base) noexcept
+    {
+        const float width = m.amounts[(size_t) target];
+        if (width <= 0.0f)
+            return base;
+        return movement::orbit (base, width, movement::value (m.shape, cycles, movement::targetSeed (seed, target)));
+    };
+
+    std::array<float, numMoveTargets> target {};
+    target[moveStretch] = moved (moveStretch, baseSettings.stretch) - baseSettings.stretch;
+    target[moveSpread] = moved (moveSpread, baseSettings.spread) - baseSettings.spread;
+    const float formantNorm = (baseSettings.formantSemitones + 12.0f) / 24.0f;
+    target[moveFormant] = moved (moveFormant, formantNorm) - formantNorm;
+    // Wander: a share of the loop either side of where the note would be, up to half the
+    // loop each way at 100%.
+    target[moveWander] = m.amounts[moveWander] > 0.0f
+        ? 0.5f * m.amounts[moveWander] * movement::value (m.shape, cycles, movement::targetSeed (seed, moveWander))
+        : 0.0f;
+
+    // Ease toward the new place over about 30 ms: switching shape, a jump in the song's
+    // position or a new orbit never steps.
+    const float ease = jump ? 1.0f : 1.0f - std::exp (-(float) numSamples / (0.03f * (float) hostRate));
+    for (int t = 0; t < numMoveTargets; ++t)
+        moveOffset[(size_t) t] += (target[(size_t) t] - moveOffset[(size_t) t]) * ease;
+
+    refreshMoved();
+}
+
+void SingVoice::applyWander (bool jump) noexcept
+{
+    if (source == nullptr)
+        return;
+    // Loop samples: the play buffer runs at the voice's rate.
+    const double loopLength = (double) std::max (1, std::min (source->settings().length, source->size()));
+    const double wanted = (double) moveOffset[moveWander] * loopLength;
+    const double delta = wanted - wanderApplied;
+    wanderApplied = wanted;
+    if (std::abs (delta) < 1.0e-9 && ! jump)
+        return;
+    if (bloomNote)
+        bloom.nudge (delta);
+    else
+        for (auto& c : copies)
+            if (c.running)
+                c.engine.nudge (delta);
+}
+
+SingVoice::Moved SingVoice::getMoved() const noexcept
+{
+    Moved m;
+    m.stretch = voiceSettings.stretch;
+    m.spread = voiceSettings.spread;
+    m.formant = (voiceSettings.formantSemitones + 12.0f) / 24.0f;
+    m.wander = moveOffset[moveWander];
+    return m;
 }
 
 void SingVoice::startCopy (int index) noexcept
@@ -348,6 +437,9 @@ void SingVoice::render (float* left, float* right, int numSamples) noexcept
 
 void SingVoice::renderSubBlock (float* left, float* right, int n) noexcept
 {
+    updateMovement (n, false);
+    applyWander (false);
+
     // Pitch: glide from the previous note in constant time, then follow bends directly.
     const float target = targetSemitones();
     if (gliding)

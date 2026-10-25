@@ -221,6 +221,16 @@ void BloomVoice::stop() noexcept
     units = 0;
 }
 
+void BloomVoice::nudge (double samples) noexcept
+{
+    if (! active || source == nullptr || samples == 0.0)
+        return;
+    const auto length = (double) source->size();
+    readPosition = std::fmod (readPosition + samples, length);
+    if (readPosition < 0.0)
+        readPosition += length;
+}
+
 double BloomVoice::playPosition (double offsetSeconds) const noexcept
 {
     if (! active || source == nullptr)

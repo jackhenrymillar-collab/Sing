@@ -111,6 +111,7 @@ void SingSynth::noteOn (int note, float velocity) noexcept
     const auto index = (size_t) (v - voices.data());
     const float semitones = (float) note - hzToMidi (settings.voice.rootHz);
 
+    v->setMoveClock (moveCycles);
     v->start (*source, note, velocity, settings.voice, hasLastNote,
               lastNoteSemitones + settings.voice.pitchBendSemitones, nextSeed);
     v->setStartOrder (nextOrder++);
@@ -176,7 +177,27 @@ void SingSynth::render (float* left, float* right, int numSamples) noexcept
 {
     for (auto& v : voices)
         if (v.isActive())
+        {
+            v.setMoveClock (moveCycles);
             v.render (left, right, numSamples);
+        }
+    // Wrapped now and then, so the clock keeps its precision in a session left running for days.
+    moveCycles += settings.voice.movement.cyclesPerSample * (double) numSamples;
+    if (moveCycles > 1.0e6)
+        moveCycles -= 1.0e6;
+}
+
+const SingVoice* SingSynth::newestVoice() const noexcept
+{
+    const SingVoice* newest = nullptr;
+    for (const auto& v : voices)
+        if (v.isActive() && ! v.isReleased() && (newest == nullptr || v.getStartOrder() > newest->getStartOrder()))
+            newest = &v;
+    if (newest == nullptr)
+        for (const auto& v : voices)
+            if (v.isActive() && (newest == nullptr || v.getStartOrder() > newest->getStartOrder()))
+                newest = &v;
+    return newest;
 }
 
 int SingSynth::activeVoiceCount() const noexcept

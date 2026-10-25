@@ -35,12 +35,116 @@ juce::Rectangle<float> Knob::dialBounds() const
     return { (static_cast<float> (getWidth()) - dialSize) * 0.5f, topMargin, dialSize, dialSize };
 }
 
+Knob::~Knob() = default;
+
 bool Knob::hitTest (int x, int y)
 {
     const auto d = dialBounds();
     const auto p = juce::Point<float> (static_cast<float> (x), static_cast<float> (y));
     return p.getDistanceFrom (d.getCentre()) <= dialSize * 0.55f
+        || onRing (p)
         || (p.y > d.getBottom() && std::abs (p.x - d.getCentreX()) < dialSize * 0.7f);
+}
+
+void Knob::setOrbit (juce::RangedAudioParameter& parameter)
+{
+    orbit = std::make_unique<juce::ParameterAttachment> (parameter, [this] (float value)
+    {
+        orbitAmount = juce::jlimit (0.0f, 1.0f, value * 0.01f);
+        repaint();
+    });
+    orbit->sendInitialUpdate();
+}
+
+void Knob::setOrbitLive (float position)
+{
+    if (std::abs (position - orbitLive) > 1.0e-4f)
+    {
+        orbitLive = position;
+        repaint();
+    }
+}
+
+bool Knob::onRing (juce::Point<float> p) const
+{
+    if (orbit == nullptr)
+        return false;
+    // The ring and a little either side of it, so it is easy to catch. The gap at the bottom
+    // belongs to the label.
+    const auto d = dialBounds();
+    const float r = p.getDistanceFrom (d.getCentre());
+    const float ring = dialSize * 0.5f + ringGap;
+    return r > dialSize * 0.5f + 1.0f && r < ring + 8.0f && p.y < d.getBottom() + 4.0f;
+}
+
+void Knob::setRingHover (bool h)
+{
+    if (h != ringHover)
+    {
+        ringHover = h;
+        repaint();
+    }
+}
+
+void Knob::mouseMove (const juce::MouseEvent& e)
+{
+    setRingHover (onRing (e.position));
+    Slider::mouseMove (e);
+}
+
+void Knob::mouseExit (const juce::MouseEvent& e)
+{
+    setRingHover (false);
+    Slider::mouseExit (e);
+}
+
+void Knob::mouseDown (const juce::MouseEvent& e)
+{
+    if (orbit != nullptr && (onRing (e.position) || e.mods.isAltDown()) && ! e.mods.isPopupMenu())
+    {
+        orbitDragging = true;
+        orbitDragStart = orbitAmount;
+        orbit->beginGesture();
+        repaint();
+        return;
+    }
+    Slider::mouseDown (e);
+}
+
+void Knob::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! orbitDragging)
+    {
+        Slider::mouseDrag (e);
+        return;
+    }
+    // Up widens the orbit. 200 units of travel cover it all; Shift for fine moves.
+    const float travel = e.mods.isShiftDown() ? 800.0f : 200.0f;
+    const float amount = juce::jlimit (0.0f, 1.0f, orbitDragStart - (float) e.getDistanceFromDragStartY() / travel);
+    orbit->setValueAsPartOfGesture (amount * 100.0f);
+}
+
+void Knob::mouseUp (const juce::MouseEvent& e)
+{
+    if (! orbitDragging)
+    {
+        Slider::mouseUp (e);
+        return;
+    }
+    orbitDragging = false;
+    orbit->endGesture();
+    setRingHover (onRing (e.position));
+    repaint();
+}
+
+void Knob::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (orbit != nullptr && onRing (e.position))
+    {
+        orbit->setValueAsCompleteGesture (0.0f);
+        return;
+    }
+    Slider::mouseDoubleClick (e);
 }
 
 void Knob::rebuildDial (float pixelScale)
@@ -95,6 +199,39 @@ void Knob::paint (juce::Graphics& g)
     g.setColour (Colours::gold.withAlpha (isMouseOverOrDragging() ? 0.6f : 0.25f));
     g.drawEllipse (d.expanded (0.5f), 1.0f);
 
+    // The orbit: a faint track while you can set it, the gold arc where the knob wanders, and
+    // a light where it is now.
+    if (orbit != nullptr && (orbitAmount > 0.0f || ringHover || orbitDragging))
+    {
+        const float ring = dialSize * 0.5f + ringGap;
+        const auto arc = [&] (float from, float to)
+        {
+            juce::Path p;
+            p.addCentredArc (c.x, c.y, ring, ring, 0.0f,
+                             juce::degreesToRadians (-135.0f + 270.0f * from), juce::degreesToRadians (-135.0f + 270.0f * to), true);
+            return p;
+        };
+        const juce::PathStrokeType stroke (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+        g.setColour (Colours::gold.withAlpha (ringHover || orbitDragging ? 0.22f : 0.12f));
+        g.strokePath (arc (0.0f, 1.0f), stroke);
+        if (orbitAmount > 0.0f)
+        {
+            const float base = static_cast<float> (valueToProportionOfLength (getValue()));
+            const float half = 0.5f * orbitAmount;
+            const float centre = juce::jlimit (half, 1.0f - half, base);
+            g.setColour (Colours::gold.withAlpha (ringHover || orbitDragging ? 0.9f : 0.65f));
+            g.strokePath (arc (centre - half, std::max (centre + half, centre - half + 0.004f)), stroke);
+        }
+        if (orbitAmount > 0.0f && orbitLive >= 0.0f)
+        {
+            const float a = juce::degreesToRadians (-135.0f + 270.0f * juce::jlimit (0.0f, 1.0f, orbitLive));
+            const juce::Point<float> light (c.x + ring * std::sin (a), c.y - ring * std::cos (a));
+            fillBlurredDisc (g, light, 4.0f, 10.0f, juce::Colour (0xffffd696).withAlpha (0.9f));
+            g.setColour (Colours::goldLight);
+            g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre (light));
+        }
+    }
+
     // The glowing dot sweeps 270 degrees, from -135 to +135.
     const float angle = juce::degreesToRadians (-135.0f + 270.0f * static_cast<float> (valueToProportionOfLength (getValue())));
     const juce::Point<float> dot (c.x + 28.0f * std::sin (angle), c.y - 28.0f * std::cos (angle));
@@ -105,9 +242,77 @@ void Knob::paint (juce::Graphics& g)
     const float w = static_cast<float> (getWidth());
     drawTrackedText (g, label.toUpperCase(), { 0.0f, d.getBottom() + 8.0f, w, 16.0f },
                      Fonts::sans (12.0f, false, 0.2f), juce::Justification::centred, juce::Colour (0xfff1eaf6));
+    // While you're on the ring, the value line shows the orbit instead.
+    if (orbit != nullptr && (ringHover || orbitDragging))
+    {
+        const auto text = orbitAmount > 0.0f ? "Orbit " + juce::String (juce::roundToInt (orbitAmount * 100.0f)) + "%"
+                                             : juce::String ("Drag to move");
+        drawTrackedText (g, text, { 0.0f, d.getBottom() + 28.0f, w, 20.0f }, Fonts::sans (14.0f), juce::Justification::centred, Colours::gold);
+        return;
+    }
     const auto value = formatValue ? formatValue (getValue()) : getTextFromValue (getValue());
     drawTrackedText (g, value, { 0.0f, d.getBottom() + 28.0f, w, 20.0f },
                      Fonts::sans (14.0f), juce::Justification::centred, Colours::ivory);
+}
+
+//==============================================================================
+ShapeButton::ShapeButton() : juce::Button ("Movement shape")
+{
+    setTitle ("Movement shape");
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+}
+
+void ShapeButton::setShape (int index, const juce::String& name)
+{
+    shape = index;
+    setButtonText (name.toUpperCase());
+    setDescription (name);
+    repaint();
+}
+
+float ShapeButton::preferredWidth() const
+{
+    // Wide enough for the longest name, so the row doesn't shift as the shape changes.
+    return 14.0f + 26.0f + 8.0f + trackedTextWidth ("BREATH", Fonts::sans (11.0f, false, 0.18f)) + 16.0f;
+}
+
+void ShapeButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
+{
+    const auto b = getLocalBounds().toFloat().reduced (0.5f);
+    const float radius = b.getHeight() * 0.5f;
+    g.setColour (Colours::night.withAlpha (down ? 0.8f : (highlighted ? 0.75f : 0.6f)));
+    g.fillRoundedRectangle (b, radius);
+    g.setColour (Colours::gold.withAlpha (highlighted ? 0.7f : 0.45f));
+    g.drawRoundedRectangle (b, radius, 1.0f);
+
+    // A small drawing of the shape, two periods long.
+    const juce::Rectangle<float> glyph (b.getX() + 14.0f, b.getCentreY() - 6.0f, 26.0f, 12.0f);
+    juce::Path p;
+    for (int i = 0; i <= 40; ++i)
+    {
+        const float t = (float) i / 40.0f;
+        float v = 0.0f;
+        if (shape == 1)
+            v = std::sin (t * 4.0f * juce::MathConstants<float>::pi);
+        else if (shape == 2)
+        {
+            const float ph = std::fmod (t * 2.0f, 1.0f);
+            v = ph < 0.4f ? -std::cos (juce::MathConstants<float>::pi * ph / 0.4f)
+                          : std::cos (juce::MathConstants<float>::pi * (ph - 0.4f) / 0.6f);
+        }
+        else
+            v = 0.55f * std::sin (t * 7.1f + 0.4f) + 0.35f * std::sin (t * 17.3f + 1.1f) + 0.1f * std::sin (t * 31.0f);
+        const juce::Point<float> pt (glyph.getX() + t * glyph.getWidth(), glyph.getCentreY() - v * glyph.getHeight() * 0.5f);
+        if (i == 0)
+            p.startNewSubPath (pt);
+        else
+            p.lineTo (pt);
+    }
+    g.setColour (Colours::gold);
+    g.strokePath (p, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+    drawTrackedText (g, getButtonText(), b.withTrimmedLeft (glyph.getRight() - b.getX() + 8.0f), Fonts::sans (11.0f, false, 0.18f),
+                     juce::Justification::centredLeft, Colours::text);
 }
 
 //==============================================================================

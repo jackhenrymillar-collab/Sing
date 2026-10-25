@@ -107,6 +107,10 @@ public:
     void setSource (const LoopSource& source) noexcept;   // ignored unless canPlay (source)
     void setParameters (const Parameters& p) noexcept { params = p; }
 
+    // Moves the read position by this many play buffer samples (either way), for Wander.
+    // The next frame reads from there, so the move blends in over the window.
+    void nudge (double samples) noexcept;
+
     // Adds numSamples to left and right.
     void render (float* left, float* right, int numSamples) noexcept;
     void stop() noexcept;

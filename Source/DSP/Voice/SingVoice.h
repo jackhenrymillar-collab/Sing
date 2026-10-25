@@ -3,6 +3,7 @@
 #include "Bloom/BloomVoice.h"
 #include "Stretch/GranularEngine.h"
 #include "Voice/FormantShifter.h"
+#include "Voice/Movement.h"
 
 #include <array>
 #include <cstdint>
@@ -48,6 +49,10 @@ struct VoiceSettings
     // Which engine new notes use. A note keeps its engine until it ends. A Bloom note needs
     // a loop with Bloom's analysis; without one it plays granular.
     StretchMode mode = StretchMode::granular;
+
+    // Movement: the orbits of Stretch, Spread and Formant, and Wander (each note's reading
+    // point moving inside the loop). Air and Space orbit after the notes, in the processor.
+    MovementSettings movement;
 };
 
 // The gentle fade in and out of each note.
@@ -96,7 +101,16 @@ public:
     void stop() noexcept;
 
     void setSource (const LoopSource& source) noexcept;
-    void setSettings (const VoiceSettings& settings) noexcept { voiceSettings = settings; }
+    void setSettings (const VoiceSettings& settings) noexcept;
+
+    // Where the movement is, in cycles of its period, at the start of the next render() call.
+    // The synth keeps one clock for every note (so they can follow the song's bars).
+    void setMoveClock (double cycles) noexcept { moveClock = cycles; }
+
+    // Where Stretch, Spread and Formant have moved to on this note, each 0 to 1 of its
+    // control's range, and Wander's offset as a share of the loop (-0.5 to 0.5).
+    struct Moved { float stretch = 0.0f, spread = 0.0f, formant = 0.5f, wander = 0.0f; };
+    Moved getMoved() const noexcept;
 
     // Adds numSamples (any length) of the note to left and right.
     void render (float* left, float* right, int numSamples) noexcept;
@@ -154,6 +168,11 @@ private:
     float pitchRatio (int copy) const noexcept;
     float periodFor (const GranularEngine& engine, float ratio) const noexcept;
     float formantRatioNow() const noexcept;
+    // Works out this sub-block's settings (voiceSettings) from the knobs (baseSettings) and
+    // the movement, and moves the reading point for Wander. jump: no easing (note start).
+    void updateMovement (int numSamples, bool jump) noexcept;
+    void applyWander (bool jump) noexcept;
+    void refreshMoved() noexcept;   // voiceSettings from baseSettings and the eased offsets
 
     double hostRate = 48000.0;
     std::array<Copy, (size_t) maxCopies> copies;
@@ -161,8 +180,16 @@ private:
     bool bloomNote = false;
     std::vector<float> envelopeGains, mixLeft, mixRight;
     Envelope envelope;
-    VoiceSettings voiceSettings;
+    VoiceSettings baseSettings;    // as the knobs are set
+    VoiceSettings voiceSettings;   // as this sub-block plays them, moved by the orbits
     const LoopSource* source = nullptr;
+
+    // Movement.
+    double moveClock = 0.0;        // cycles, at the next sub-block
+    double movePhase = 0.0;        // this note's own place in the wave (Each note)
+    uint32_t moveSeed = 1;         // this note's own drift (Each note)
+    std::array<float, numMoveTargets> moveOffset {};   // eased: moved value minus the knob
+    double wanderApplied = 0.0;    // how far Wander has moved the reading point, loop samples
 
     bool active = false, killed = false, released = false;
     int note = 60;

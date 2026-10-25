@@ -59,6 +59,19 @@ namespace ParamID
     inline constexpr auto spaceFilterOn  = "spacefilteron";
     inline constexpr auto spaceLow       = "spacelow";
     inline constexpr auto spaceHigh      = "spacehigh";
+    // Movement: an orbit for each big knob that can move, Wander for the loop, and the
+    // strip that sets the shape and speed for all of them.
+    inline constexpr auto orbitStretch   = "orbitstretch";
+    inline constexpr auto orbitSpread    = "orbitspread";
+    inline constexpr auto orbitFormant   = "orbitformant";
+    inline constexpr auto orbitAir       = "orbitair";
+    inline constexpr auto orbitSpace     = "orbitspace";
+    inline constexpr auto wander         = "wander";
+    inline constexpr auto moveShape      = "moveshape";
+    inline constexpr auto moveSpeed      = "movespeed";
+    inline constexpr auto moveSync       = "movesync";
+    inline constexpr auto moveBars       = "movebars";
+    inline constexpr auto moveEach       = "moveeach";
 }
 
 // The order matches LoopDirection.
@@ -69,6 +82,13 @@ juce::StringArray engineNames();
 
 // The Filter's slopes, in parameter order: Sharp, 6 dB and 12 dB per octave.
 juce::StringArray filterSlopeNames();
+
+// Movement's shapes, in parameter order: Drift, Wave and Breath.
+juce::StringArray moveShapeNames();
+
+// Movement's synced lengths, in parameter order, and each one in bars.
+juce::StringArray moveBarNames();
+float moveBarsAt (int index);
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
@@ -83,5 +103,6 @@ juce::String formatTone (float t);
 juce::String formatDecibels (float db);
 juce::String formatHz (float hz);
 juce::String formatCents (float cents);
+juce::String formatOrbit (float percent);
 
 } // namespace sing

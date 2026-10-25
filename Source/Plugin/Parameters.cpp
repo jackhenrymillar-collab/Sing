@@ -63,6 +63,28 @@ juce::String formatBeat (float hz) { return juce::String (hz, hz < 9.95f ? 1 : 0
 
 juce::StringArray filterSlopeNames() { return { "Sharp", "6 dB", "12 dB" }; }
 
+juce::StringArray moveShapeNames() { return { "Drift", "Wave", "Breath" }; }
+
+namespace
+{
+    constexpr float kMoveBars[] = { 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 16.0f, 32.0f };
+}
+
+juce::StringArray moveBarNames()
+{
+    return { juce::String::fromUTF8 ("\xc2\xbc bar"), juce::String::fromUTF8 ("\xc2\xbd bar"), "1 bar", "2 bars", "4 bars", "8 bars", "16 bars", "32 bars" };
+}
+
+float moveBarsAt (int index)
+{
+    return kMoveBars[juce::jlimit (0, (int) std::size (kMoveBars) - 1, index)];
+}
+
+juce::String formatOrbit (float p)
+{
+    return p < 0.05f ? juce::String ("Still") : formatPercent (p);
+}
+
 juce::String formatGlide (float ms)
 {
     return ms < 995.0f ? juce::String (juce::roundToInt (ms)) + " ms" : juce::String (ms / 1000.0f, 1) + " s";
@@ -156,6 +178,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::spaceLow, v }, "Space Low Cut", skewed (20.0f, 2000.0f, 200.0f), 150.0f, withText (formatHz)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::spaceHigh, v }, "Space High Cut", skewed (1000.0f, 20000.0f, 6000.0f), 9000.0f, withText (formatHz)));
     // Also the host's bypass switch (see SingProcessor::getBypassParameter). Clicking the evening star toggles it.
+    // Movement. Every orbit starts at 0, so sessions from before it sound the same.
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::orbitStretch, v }, "Stretch Orbit", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatOrbit)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::orbitSpread, v }, "Spread Orbit", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatOrbit)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::orbitFormant, v }, "Formant Orbit", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatOrbit)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::orbitAir, v }, "Air Orbit", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatOrbit)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::orbitSpace, v }, "Space Orbit", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatOrbit)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::wander, v }, "Wander", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatOrbit)));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::moveShape, v }, "Movement Shape", moveShapeNames(), 0));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::moveSpeed, v }, "Movement Speed", skewed (1.0f, 120.0f, 12.0f, 0.1f), 12.0f, withText (formatSeconds)));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::moveSync, v }, "Movement Sync", false));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::moveBars, v }, "Movement Bars", moveBarNames(), 4));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::moveEach, v }, "Movement Each Note", true));
+
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::bypass, v }, "Bypass", false));
 
     return layout;

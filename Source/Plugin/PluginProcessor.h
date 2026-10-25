@@ -76,6 +76,11 @@ public:
     };
     std::array<Light, maxLights> getLights() const noexcept;
 
+    // Where each orbit has moved its knob to right now (0 to 1 of the knob's range), for the
+    // lights that circle the knobs: the newest note's for Stretch, Spread and Formant. -1
+    // when that knob isn't moving (no orbit, or no note sounding).
+    std::array<float, numMoveTargets> getOrbitPositions() const noexcept;
+
     // The panel's size, remembered with the session.
     float getUiScale() const noexcept { return uiScale.load(); }
     void setUiScale (float s) noexcept { uiScale = s; }
@@ -141,6 +146,11 @@ private:
         std::atomic<uint32_t> noteId { 0 };
     };
     std::array<SharedLight, maxLights> lights;
+    std::array<std::atomic<float>, numMoveTargets> orbitPositions {};
+
+    MovementSettings readMovement (double sampleRate) const noexcept;
+    void followSong (const MovementSettings&) noexcept;
+    std::array<float, numMoveTargets> fxOffset {};
 
     // Cached raw parameter pointers: lock-free reads on the audio thread.
     std::atomic<float>* attack = nullptr;
@@ -187,6 +197,12 @@ private:
     std::atomic<float>* spaceFilterOn = nullptr;
     std::atomic<float>* spaceLow = nullptr;
     std::atomic<float>* spaceHigh = nullptr;
+    std::array<std::atomic<float>*, numMoveTargets> orbitAmounts {};
+    std::atomic<float>* moveShape = nullptr;
+    std::atomic<float>* moveSpeed = nullptr;
+    std::atomic<float>* moveSync = nullptr;
+    std::atomic<float>* moveBars = nullptr;
+    std::atomic<float>* moveEach = nullptr;
     juce::AudioProcessorParameter* bypassParam = nullptr;
     double preparedRate = 0.0;
 

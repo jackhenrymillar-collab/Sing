@@ -1,36 +1,78 @@
 #pragma once
 
+#include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <functional>
+#include <memory>
 
 namespace sing::ui
 {
 
 // A blue hour knob: the 76-unit dial with its glowing dot, plus its label and value
 // underneath. Drag up/down (hold Shift for fine moves), scroll, or double-click to reset.
+//
+// A knob that can move has an orbit ring around its dial (Movement). Drag the ring up or
+// down (or Option-drag the dial) to set how far the knob wanders; double-click the ring to
+// stop it. The gold arc shows where it wanders and a small light circles to where it is now.
 class Knob final : public juce::Slider
 {
 public:
     static constexpr float dialSize = 76.0f;
-    static constexpr float topMargin = 6.0f;
+    static constexpr float topMargin = 14.0f;   // room above the dial for the orbit ring
     static constexpr float height = topMargin + dialSize + 52.0f;
+    static constexpr float ringGap = 9.0f;   // from the dial's edge to the orbit ring
 
     Knob();
+    ~Knob() override;
 
     void setLabel (const juce::String&);
     std::function<juce::String (double)> formatValue;
 
+    // Gives the knob an orbit ring for this parameter (0 to 100%).
+    void setOrbit (juce::RangedAudioParameter&);
+    // Where the knob has wandered to now, 0 to 1 of its range; -1 hides the light.
+    void setOrbitLive (float position);
+    float getOrbitAmount() const noexcept { return orbitAmount; }
+
     void paint (juce::Graphics&) override;
     bool hitTest (int x, int y) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
 
 private:
     juce::Rectangle<float> dialBounds() const;
     void rebuildDial (float pixelScale);
+    bool onRing (juce::Point<float>) const;
+    void setRingHover (bool);
 
     juce::String label;
     juce::Image dial;
     float dialScale = 0.0f;
+
+    std::unique_ptr<juce::ParameterAttachment> orbit;
+    float orbitAmount = 0.0f;          // 0 to 1
+    float orbitLive = -1.0f;
+    float orbitDragStart = 0.0f;
+    bool orbitDragging = false, ringHover = false;
+};
+
+// Movement's shape switch in the bottom row: a pill with a small drawing of the shape and
+// its name. Click for the next shape.
+class ShapeButton final : public juce::Button
+{
+public:
+    ShapeButton();
+    void setShape (int index, const juce::String& name);
+    void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+    float preferredWidth() const;
+
+private:
+    int shape = 0;
 };
 
 // The rounded switches: Hold along the bottom, and the loop direction choices.
