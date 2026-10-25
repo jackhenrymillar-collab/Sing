@@ -64,6 +64,8 @@ SingProcessor::SingProcessor()
     spaceFilterOn = state.getRawParameterValue (ParamID::spaceFilterOn);
     spaceLow = state.getRawParameterValue (ParamID::spaceLow);
     spaceHigh = state.getRawParameterValue (ParamID::spaceHigh);
+    spaceDecay = state.getRawParameterValue (ParamID::spaceDecay);
+    spaceSize = state.getRawParameterValue (ParamID::spaceSize);
     orbitAmounts[moveStretch] = state.getRawParameterValue (ParamID::orbitStretch);
     orbitAmounts[moveSpread] = state.getRawParameterValue (ParamID::orbitSpread);
     orbitAmounts[moveFormant] = state.getRawParameterValue (ParamID::orbitFormant);
@@ -257,7 +259,9 @@ void SingProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     binaural.reset();
     space.prepare (sampleRate, juce::jmax (512, samplesPerBlock));
     space.setFilter (spaceFilterOn->load() > 0.5f, spaceLow->load(), spaceHigh->load());
-    space.setAmount (spaceAmount->load() * 0.01f);
+    space.setDecay (spaceDecay->load());
+    space.setSize (spaceSize->load() * 0.01f);
+    space.setLevel (spaceAmount->load() * 0.01f);
     space.reset();
     monoRight.assign ((size_t) juce::jmax (512, samplesPerBlock), 0.0f);
     outputGain.reset (sampleRate, 0.02);
@@ -277,8 +281,8 @@ double SingProcessor::getTailLengthSeconds() const
 {
     if (release == nullptr)
         return 0.0;
-    const float amount = spaceAmount->load() * 0.01f;
-    const double reverb = amount > 0.0f ? 1.2 * Space::mapping (amount).decaySeconds : 0.0;
+    const bool reverbOn = spaceAmount->load() > 0.0f || orbitAmounts[moveSpace]->load() > 0.0f;
+    const double reverb = reverbOn ? 1.2 * static_cast<double> (spaceDecay->load()) : 0.0;
     return static_cast<double> (release->load()) + reverb;
 }
 
@@ -484,7 +488,7 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
             return now;
         };
         air.setAmount (moved (moveAir, airAmount->load() * 0.01f));
-        space.setAmount (moved (moveSpace, spaceAmount->load() * 0.01f));
+        space.setLevel (moved (moveSpace, spaceAmount->load() * 0.01f));
     }
 
     // The newest note's orbits, for the panel.
@@ -502,6 +506,8 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         show (moveWander, moved.wander + 0.5f);
     }
     space.setFilter (spaceFilterOn->load() > 0.5f, spaceLow->load(), spaceHigh->load());
+    space.setDecay (spaceDecay->load());
+    space.setSize (spaceSize->load() * 0.01f);
     if (right != nullptr)
     {
         binaural.process (left, right, numSamples);
@@ -642,6 +648,27 @@ void SingProcessor::setStateInformation (const void* data, int sizeInBytes)
 
     if (auto restored = VoiceData::fromValueTree (voiceNode))
         setVoice (std::move (restored));
+
+    // Sessions from before Space had its own Decay and Size: carry the old knob over.
+    if (! tree.getChildWithProperty ("id", ParamID::spaceDecay).isValid())
+    {
+        std::map<juce::String, float> values;
+        for (const auto& child : tree)
+            if (child.hasType ("PARAM"))
+                values[child.getProperty ("id").toString()] = static_cast<float> (child.getProperty ("value"));
+        upgradeOldSpace (values);
+        for (const auto* id : { ParamID::space, ParamID::spaceDecay, ParamID::spaceSize })
+        {
+            auto child = tree.getChildWithProperty ("id", id);
+            if (! child.isValid())
+            {
+                child = juce::ValueTree ("PARAM");
+                child.setProperty ("id", id, nullptr);
+                tree.appendChild (child, nullptr);
+            }
+            child.setProperty ("value", values[id], nullptr);
+        }
+    }
 
     state.replaceState (tree);
 

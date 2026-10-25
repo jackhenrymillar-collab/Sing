@@ -1,8 +1,8 @@
 #pragma once
 
 #include "PluginProcessor.h"
-#include "UI/BloomSky.h"
 #include "UI/BlueHourSky.h"
+#include "UI/NightSky.h"
 #include "UI/Controls.h"
 #include "UI/ModulePanel.h"
 #include "UI/Theme.h"
@@ -55,9 +55,7 @@ private:
 
     SingProcessor& processor;
     PresetManager& presets;
-    ui::BlueHourSky sky;
-    ui::BloomSky bloomSky;
-    float bloomMix = 0.0f;   // 0 shows the blue hour, 1 the Bloom sky; eases between them
+    ui::NightSky sky;   // the firefly night, in both engines
 
     // Header
     ui::ArrowButton previous { "Previous preset", true }, next { "Next preset", false };

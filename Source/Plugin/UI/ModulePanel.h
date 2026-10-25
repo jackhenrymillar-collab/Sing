@@ -12,7 +12,8 @@ namespace sing::ui
 
 // The modules on the main panel: one tile per module, each with its on/off light, its controls
 // and a small moving picture of what it does. Most shape Bloom only and rest while Grain plays;
-// Binaural and Space filter work in both engines.
+// Binaural and Space work in both engines. (The Space tile is ModuleKind::spaceFilter, its
+// name from when it held only the reverb's cuts.)
 enum class ModuleKind { window, onsets, shift, smear, tone, harmonics, filter, compressor, octaves, binaural, spaceFilter };
 
 // Every module's settings, in parameter units, for the pictures.
@@ -33,6 +34,8 @@ struct ModuleSettings
     std::array<float, numOctaves> octaveLevels { 0.0f, 0.0f, 100.0f, 0.0f, 0.0f, 0.0f };   // percent
     float beatHz = 4.0f, binauralAmount = 100.0f;
     float spaceLowHz = 150.0f, spaceHighHz = 9000.0f;
+    float spaceLevel = 0.0f;           // percent: the Space knob
+    float spaceDecaySeconds = 6.3f, spaceSize = 67.5f;
     bool onsetsOn = true, shiftOn = true, smearOn = true, toneOn = true, harmonicsOn = false, filterOn = false;
     bool compressorOn = false, octavesOn = false, binauralOn = false, spaceFilterOn = false;
 
@@ -56,7 +59,9 @@ public:
     ModuleTile (ModuleKind, const juce::String& name, bool isNew);
 
     ModuleKind kind() const noexcept { return moduleKind; }
-    PowerButton* power() noexcept { return powerButton.get(); }   // null for Window, which is always on
+    PowerButton* power() noexcept { return powerButton.get(); }   // null for Window (always on) and Space
+    // A small switch in the header, where the power light would be (Space's CUTS).
+    PillToggle& addHeaderToggle (const juce::String& text);
     TextDragger& addControl (const juce::String& caption);
     VerticalFader& addFader (const juce::String& caption);
     PillToggle& addChoice (const juce::String& text);
@@ -75,6 +80,7 @@ private:
     juce::String name;
     bool isNew;
     std::unique_ptr<PowerButton> powerButton;
+    std::unique_ptr<PillToggle> headerToggle;
     std::vector<std::unique_ptr<TextDragger>> controls;
     std::vector<std::unique_ptr<VerticalFader>> faders;
     std::vector<std::unique_ptr<PillToggle>> choices;

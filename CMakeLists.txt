@@ -104,7 +104,7 @@ if (SING_BUILD_PLUGIN)
         Source/Plugin/VoiceData.cpp)
     set (SING_UI_SOURCES
         Source/Plugin/PluginEditor.cpp
-        Source/Plugin/UI/BloomSky.cpp
+        Source/Plugin/UI/NightSky.cpp
         Source/Plugin/UI/BlueHourSky.cpp
         Source/Plugin/UI/Controls.cpp
         Source/Plugin/UI/ModulePanel.cpp

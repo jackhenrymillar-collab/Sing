@@ -197,6 +197,8 @@ private:
     std::atomic<float>* spaceFilterOn = nullptr;
     std::atomic<float>* spaceLow = nullptr;
     std::atomic<float>* spaceHigh = nullptr;
+    std::atomic<float>* spaceDecay = nullptr;
+    std::atomic<float>* spaceSize = nullptr;
     std::array<std::atomic<float>*, numMoveTargets> orbitAmounts {};
     std::atomic<float>* moveShape = nullptr;
     std::atomic<float>* moveSpeed = nullptr;
