@@ -158,6 +158,40 @@ double GranularEngine::alignToPhase (double target) const noexcept
     return phaseReference + std::round (diff / period) * period;
 }
 
+void GranularEngine::followHead() noexcept
+{
+    // The phase reference runs at the grains' rate and the head at Stretch speed, so they part
+    // whenever the two differ (any key but the root, any Stretch above 0). Keep the reference
+    // within a period of the head by stepping it one local pitch period at a time: it stays
+    // on the same point of the voice's cycle, and alignToPhase only ever measures a short
+    // distance. Measured across many periods of a voice whose pitch moves (vibrato), the
+    // rounding would put each grain at a different point of the cycle, and the overlapping
+    // grains would phase against each other.
+    if (! settings.phaseAlign)
+        return;
+    const double n = (double) current->size();
+    for (int guard = 0; guard < 4096; ++guard)
+    {
+        double diff = std::fmod (head - phaseReference, n);
+        if (diff > 0.5 * n) diff -= n;
+        if (diff < -0.5 * n) diff += n;
+        const double period = (double) current->periodAt (phaseReference);
+        if (period < 2.0)
+        {
+            // Unpitched here: nothing to keep in phase with, so just follow the head.
+            phaseReference = head;
+            return;
+        }
+        if (diff > period)
+            phaseReference = wrap (phaseReference + period, n);
+        else if (diff < -period)
+            phaseReference = wrap (phaseReference - period, n);
+        else
+            return;
+    }
+    phaseReference = head;
+}
+
 float GranularEngine::effectiveJitterSamples() const noexcept
 {
     const float sourceRate = (float) current->sampleRate();
@@ -284,6 +318,7 @@ void GranularEngine::process (float* left, float* right, int numSamples) noexcep
 
             head = wrap (head + (double) speed * sourceScale * (double) len, n);
             phaseReference = wrap (phaseReference + (double) rate * sourceScale * (double) len, n);
+            followHead();
             samplesToNextGrain -= (double) len;
             done += len;
 

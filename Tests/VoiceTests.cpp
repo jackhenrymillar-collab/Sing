@@ -595,3 +595,78 @@ TEST_CASE ("Formant shifter adds no partials of its own")
         CHECK (off < on * 1.0e-4);   // 40 dB down
     }
 }
+
+namespace
+{
+// Level of each 20 ms slice, in dB.
+std::vector<double> sliceLevels (const Render& r, int from, int to)
+{
+    std::vector<double> out;
+    constexpr int slice = 960;
+    for (int a = from; a + slice <= to; a += slice)
+    {
+        double e = 0.0;
+        for (int i = a; i < a + slice; ++i)
+            e += (double) r.left[(size_t) i] * r.left[(size_t) i] + (double) r.right[(size_t) i] * r.right[(size_t) i];
+        out.push_back (10.0 * std::log10 (e / (2.0 * slice) + 1.0e-12));
+    }
+    return out;
+}
+
+// 10 % to 90 % spread of the slice levels, and their mean power in dB.
+std::pair<double, double> levelSpreadAndMean (const Render& r, int from, int to)
+{
+    auto levels = sliceLevels (r, from, to);
+    double power = 0.0;
+    for (double l : levels)
+        power += std::pow (10.0, l / 10.0);
+    std::sort (levels.begin(), levels.end());
+    return { levels[levels.size() * 9 / 10] - levels[levels.size() / 10], 10.0 * std::log10 (power / (double) levels.size()) };
+}
+} // namespace
+
+TEST_CASE ("Synth: Grain stays in phase with a voice whose pitch moves, at any Stretch and key")
+{
+    // Grains are placed whole pitch periods apart so they add up cleanly. On a voice with a
+    // pitch track (vibrato), that only works while the distance being measured is short:
+    // measured across many periods, each grain lands at a different point of the cycle and
+    // the cloud phases. Turning Stretch up, or playing away from the root, used to do that,
+    // and it stayed after Stretch came back to 0.
+    const auto v = makePlaceholderVoice (PlaceholderVowel::ooh, sr, 5.0f);
+    LoopSettings s;
+    s.start = (int) (0.5 * sr);
+    s.length = (int) (3.0 * sr);
+    s.fade = (int) (0.3 * sr);
+    s.pitchPeriod = (float) (sr / v.rootHz);
+    s.pitchTrack = std::make_shared<PitchTrack> (trackPitch (v.samples.data(), (int) v.samples.size(), sr));
+    const float* ch[] = { v.samples.data() };
+    const auto src = LoopSource::build (ch, 1, (int) v.samples.size(), sr, s);
+    const int root = (int) std::lround (12.0 * std::log2 (v.rootHz / 440.0) + 69.0);
+
+    for (int semitones : { 0, 7, -5 })
+    {
+        SingSynth synth;
+        synth.prepare (sr, 256);
+        synth.setSource (src.get());
+        auto settings = plainSynth (v.rootHz);
+        settings.voice.stretch = 0.0f;
+        settings.voice.pitched = true;
+        synth.setSettings (settings);
+        synth.noteOn (root + semitones, 0.8f);
+
+        const auto fresh = levelSpreadAndMean (renderSynth (synth, 3 * 48000), 24000, 3 * 48000);
+        settings.voice.stretch = 0.85f;
+        synth.setSettings (settings);
+        const auto up = levelSpreadAndMean (renderSynth (synth, 5 * 48000), 48000, 5 * 48000);
+        settings.voice.stretch = 0.0f;
+        synth.setSettings (settings);
+        const auto back = levelSpreadAndMean (renderSynth (synth, 3 * 48000), 24000, 3 * 48000);
+
+        INFO (semitones << " st: spread fresh " << fresh.first << ", stretched " << up.first << ", back at 0 " << back.first
+                        << " dB; level back at 0 " << back.second - fresh.second << " dB");
+        CHECK (fresh.first < 3.0);
+        CHECK (up.first < 3.0);
+        CHECK (back.first < fresh.first + 1.0);
+        CHECK (std::abs (back.second - fresh.second) < 0.5);
+    }
+}

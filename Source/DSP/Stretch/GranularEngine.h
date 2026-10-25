@@ -76,6 +76,7 @@ private:
     void spawnGrain (int age) noexcept;
     void renderGrain (Grain& grain, float* left, float* right, int numSamples) noexcept;
     double alignToPhase (double target) const noexcept;
+    void followHead() noexcept;
     float effectiveJitterSamples() const noexcept;   // in source samples
     float levelCompensation (float jitterSamples) const noexcept;
     float nextRandom() noexcept;                     // uniform in [-1, 1)
