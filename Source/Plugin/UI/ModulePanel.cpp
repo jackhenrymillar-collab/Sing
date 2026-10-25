@@ -109,6 +109,8 @@ bool ModuleSettings::isOn (ModuleKind k) const noexcept
         case ModuleKind::compressor:  return compressorOn;
         case ModuleKind::octaves:     return octavesOn;
         case ModuleKind::binaural:    return binauralOn;
+        case ModuleKind::tape:        return tapeOn;
+        case ModuleKind::shimmer:     return shimmerOn;
         case ModuleKind::spaceFilter: return spaceLevel > 0.0f;
     }
     return true;
@@ -116,7 +118,7 @@ bool ModuleSettings::isOn (ModuleKind k) const noexcept
 
 bool worksInBothEngines (ModuleKind k) noexcept
 {
-    return k == ModuleKind::binaural || k == ModuleKind::spaceFilter;
+    return k == ModuleKind::binaural || k == ModuleKind::tape || k == ModuleKind::shimmer || k == ModuleKind::spaceFilter;
 }
 
 void drawModuleVisual (juce::Graphics& g, ModuleKind kind, juce::Rectangle<float> area, const ModuleSettings& s, float t)
@@ -388,6 +390,135 @@ void drawModuleVisual (juce::Graphics& g, ModuleKind kind, juce::Rectangle<float
             break;
         }
 
+        case ModuleKind::tape:
+        {
+            // A sung wave passing between two turning reels. Wow sways its pitch slowly (the
+            // wave stretches and bunches), Flutter adds a quick shiver, Drive rounds its tops
+            // off (the clean wave is the faint line behind), and Age smooths away the fine
+            // ripples, the highs that worn tape loses.
+            const float wow = juce::jlimit (0.0f, 1.0f, s.tapeWow * 0.01f);
+            const float flutter = juce::jlimit (0.0f, 1.0f, s.tapeFlutter * 0.01f);
+            const float drive = juce::jlimit (0.0f, 1.0f, s.tapeDrive * 0.01f);
+            const float age = juce::jlimit (0.0f, 1.0f, s.tapeAge * 0.01f);
+            const float speed = 1.0f + 0.35f * wow * std::sin (t * 0.9f);
+
+            // The reels, turning at the tape's wavering speed.
+            for (int side = 0; side < 2; ++side)
+            {
+                const float cx = side == 0 ? 11.0f : 109.0f, cy = 14.0f, r = 12.0f;
+                const juce::Point<float> c { u.x (cx), u.y (cy) };
+                const float pr = std::min (u.w (r), u.h (r));
+                g.setColour (lavender.withAlpha (0.45f));
+                g.drawEllipse (c.x - pr, c.y - pr, pr * 2.0f, pr * 2.0f, 1.0f);
+                g.setColour (Colours::gold.withAlpha (0.8f));
+                g.fillEllipse (c.x - pr * 0.22f, c.y - pr * 0.22f, pr * 0.44f, pr * 0.44f);
+                const float spin = t * 2.2f * speed + (float) side * 0.6f;
+                for (int k = 0; k < 3; ++k)
+                {
+                    const float a = spin + (float) k * 2.0f * pi / 3.0f;
+                    g.drawLine (c.x + std::cos (a) * pr * 0.3f, c.y + std::sin (a) * pr * 0.3f,
+                                c.x + std::cos (a) * pr * 0.8f, c.y + std::sin (a) * pr * 0.8f, 1.1f);
+                }
+            }
+            // The tape between them.
+            g.setColour (lavender.withAlpha (0.3f));
+            g.fillRect (u.x (11.0f), u.y (25.0f) - 0.5f, u.x (109.0f) - u.x (11.0f), 1.0f);
+
+            juce::Path clean, worn;
+            float phase = 0.0f;
+            for (int i = 0; i <= 160; ++i)
+            {
+                const float x = (float) i * 0.75f;
+                // Wow: the wave's spacing breathes across the tile; Flutter: a fast tremble.
+                const float local = 1.0f + 0.45f * wow * std::sin (x * 0.05f - t * 0.8f)
+                                  + 0.12f * flutter * std::sin (x * 0.9f + t * 9.0f);
+                phase += 0.75f * 0.2f * local;
+                const float p = phase - t * 1.6f;
+                const float ripple = (1.0f - age) * (0.35f * std::sin (3.0f * p) + 0.2f * std::sin (5.0f * p + 0.7f));
+                const float raw = std::sin (p) + ripple;
+                const float k = 0.6f + 2.2f * drive;
+                const float shaped = std::tanh (k * raw) / std::tanh (k);
+                const float yClean = 42.0f - 12.0f * raw / 1.3f;
+                const float yWorn = 42.0f - 13.0f * shaped;
+                const juce::Point<float> pc { u.x (x), u.y (yClean) }, pw { u.x (x), u.y (yWorn) };
+                if (i == 0)
+                {
+                    clean.startNewSubPath (pc);
+                    worn.startNewSubPath (pw);
+                }
+                else
+                {
+                    clean.lineTo (pc);
+                    worn.lineTo (pw);
+                }
+            }
+            g.setColour (lavender.withAlpha (0.35f));
+            g.strokePath (clean, juce::PathStrokeType (0.9f));
+            g.setColour (Colours::gold.withAlpha (0.92f));
+            g.strokePath (worn, juce::PathStrokeType (1.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            break;
+        }
+
+        case ModuleKind::shimmer:
+        {
+            // Pitch runs upwards here and time to the right. A held note along the bottom, and
+            // above it the halo: copies an octave (or a fifth) higher each time round the
+            // reverb, each rising in later and fainter. Rise sets how many steps up it climbs;
+            // Amount how bright the halo is.
+            const float amount = juce::jlimit (0.0f, 1.0f, s.shimmerAmount * 0.01f);
+            const float rise = juce::jlimit (0.0f, 1.0f, s.shimmerRise * 0.01f);
+            const float step = s.shimmerInterval == 1 ? 7.5f : 13.0f;
+            const int steps = 1 + juce::roundToInt (rise * (s.shimmerInterval == 1 ? 5.0f : 3.0f));
+            const float noteY = 52.0f;
+
+            g.setColour (Colours::goldLight.withAlpha (0.95f));
+            g.fillRoundedRectangle (u.x (2.0f), u.y (noteY) - 1.4f, u.w (116.0f), 2.8f, 1.4f);
+
+            for (int n = 1; n <= steps; ++n)
+            {
+                const float y = noteY - step * (float) n;
+                if (y < 3.0f)
+                    break;
+                const float start = 4.0f + 12.0f * (float) n;
+                const float fade = std::pow (0.35f + 0.5f * rise, (float) (n - 1));
+                const float a = std::min (1.0f, (0.45f + 0.9f * amount) * fade);
+                // Each copy fades in from where it starts, and shimmers along its length.
+                const int segments = 40;
+                for (int i = 0; i < segments; ++i)
+                {
+                    const float x0 = start + (118.0f - start) * (float) i / (float) segments;
+                    const float x1 = start + (118.0f - start) * (float) (i + 1) / (float) segments;
+                    const float grow = juce::jlimit (0.0f, 1.0f, (x0 - start) / 10.0f);
+                    const float twinkle = 0.85f + 0.15f * std::sin (t * 3.0f + x0 * 0.25f + (float) n * 1.7f);
+                    const juce::Colour c = (n % 2 == 0 ? Colours::cream : Colours::gold).withAlpha (a * grow * twinkle);
+                    g.setColour (c.withMultipliedAlpha (0.18f));
+                    g.fillRect (u.x (x0), u.y (y) - 2.5f, u.x (x1) - u.x (x0) + 0.3f, 5.0f);
+                    g.setColour (c);
+                    g.fillRect (u.x (x0), u.y (y) - 1.0f, u.x (x1) - u.x (x0) + 0.3f, 2.0f);
+                }
+                // A sweep from the step below, where the reverb lifts it.
+                juce::Path lift;
+                lift.startNewSubPath (u.x (start - 10.0f), u.y (y + step));
+                lift.quadraticTo (u.x (start - 2.0f), u.y (y + step), u.x (start + 2.0f), u.y (y));
+                g.setColour (lavender.withAlpha (0.5f * a));
+                g.strokePath (lift, juce::PathStrokeType (0.9f));
+            }
+            // Sparks drifting upwards through the halo.
+            for (int k = 0; k < 14; ++k)
+            {
+                const float x = 14.0f + hash (k + 51) * 102.0f;
+                const float life = std::fmod (t * (0.18f + 0.12f * hash (k + 7)) + hash (k + 3), 1.0f);
+                const float y = noteY - 4.0f - life * (noteY - 6.0f) * (0.4f + 0.6f * rise);
+                const float a = std::min (1.0f, 0.3f + amount) * std::sin (life * pi);
+                g.setColour (Colours::cream.withAlpha (a));
+                g.fillEllipse (u.x (x) - 1.2f, u.y (y) - 1.2f, 2.4f, 2.4f);
+            }
+            const auto capFont = Fonts::sans (8.5f, false, 0.12f);
+            drawTrackedText (g, s.shimmerInterval == 1 ? "+5TH" : "+OCT", { u.x (1.0f), u.y (2.0f), 40.0f, 10.0f }, capFont,
+                             juce::Justification::centredLeft, lavender);
+            break;
+        }
+
         case ModuleKind::spaceFilter:
         {
             // The reverb's tail after a sung note: the note at the left, then echoes that
@@ -525,8 +656,8 @@ void ModuleTile::update (const ModuleSettings& s, float time, bool resting)
 
 juce::Rectangle<float> ModuleTile::visualArea() const
 {
-    // Space has four rows of controls, so its picture is shorter.
-    if (moduleKind == ModuleKind::spaceFilter)
+    // Space and Tape have four rows of controls, so their pictures are shorter.
+    if (moduleKind == ModuleKind::spaceFilter || moduleKind == ModuleKind::tape)
         return { 14.0f, 40.0f, (float) getWidth() - 28.0f, 34.0f };
     return { 14.0f, 40.0f, (float) getWidth() - 28.0f, 56.0f };
 }
@@ -579,7 +710,7 @@ void ModuleTile::resized()
         headerToggle->setBounds (juce::Rectangle<float> (w - 14.0f - tw, 9.0f, tw, 22.0f).toNearestInt());
     }
 
-    const bool compact = moduleKind == ModuleKind::spaceFilter;
+    const bool compact = moduleKind == ModuleKind::spaceFilter || moduleKind == ModuleKind::tape;
     float y = compact ? 80.0f : 104.0f;
     for (auto& c : controls)
     {
@@ -687,12 +818,12 @@ ModulesPanel::ModulesPanel (juce::AudioProcessorValueTreeState& s) : state (s)
         slopeAttachment->sendInitialUpdate();
     }
 
-    auto& compressor = add (ModuleKind::compressor, "COMPRESSOR", true);
+    auto& compressor = add (ModuleKind::compressor, "COMPRESSOR", false);
     power (compressor, ParamID::compressorOn);
     attach (compressor.addControl ("Amount"), ParamID::compressor, percent,
             "Evens out the loud and quiet moments of the voice, so the pad holds a steady level");
 
-    auto& octaves = add (ModuleKind::octaves, "OCTAVES", true);
+    auto& octaves = add (ModuleKind::octaves, "OCTAVES", false);
     power (octaves, ParamID::octavesOn);
     {
         const char* ids[ModuleSettings::numOctaves] = { ParamID::octaveDown2, ParamID::octaveDown1, ParamID::octaveRoot,
@@ -708,14 +839,48 @@ ModulesPanel::ModulesPanel (juce::AudioProcessorValueTreeState& s) : state (s)
         }
     }
 
-    auto& binaural = add (ModuleKind::binaural, "BINAURAL", true);
+    auto& binaural = add (ModuleKind::binaural, "BINAURAL", false);
     power (binaural, ParamID::binauralOn);
     attach (binaural.addControl ("Rate"), ParamID::binauralRate, [] (double v) { return formatBeat ((float) v); },
             "How fast the beat between your ears pulses. Best heard on headphones");
     attach (binaural.addControl ("Amount"), ParamID::binauralAmount, percent, "How much of the beat to mix in");
 
+    auto& tape = add (ModuleKind::tape, "TAPE", true);
+    power (tape, ParamID::tapeOn);
+    attach (tape.addControl ("Wow"), ParamID::tapeWow, percent, "A slow sway in pitch, like a reel that turns a little unevenly");
+    attach (tape.addControl ("Flutter"), ParamID::tapeFlutter, percent, "A quick shiver in pitch, from a worn capstan");
+    attach (tape.addControl ("Drive"), ParamID::tapeDrive, percent, "Pushes the voice into the tape: warmer, rounder, softly saturated");
+    attach (tape.addControl ("Age"), ParamID::tapeAge, percent, "Rolls off the highs, the way old tape loses its top end");
+
+    auto& shimmer = add (ModuleKind::shimmer, "SHIMMER", true);
+    power (shimmer, ParamID::shimmerOn);
+    attach (shimmer.addControl ("Amount"), ParamID::shimmerAmount, percent,
+            "How much of the pitched-up voice feeds the Space reverb. Turn Space up to hear it");
+    attach (shimmer.addControl ("Rise"), ParamID::shimmerRise, percent,
+            "How high the halo climbs: each time round the reverb it lifts again");
+    {
+        const auto names = shimmerIntervalNames();
+        for (int i = 0; i < 2; ++i)
+        {
+            auto& b = shimmer.addChoice (names[i].toUpperCase());
+            b.setTooltip (i == 0 ? juce::String ("Each step an octave higher: bright and bell-like")
+                                 : "Each step a fifth higher: a softer, organ-like halo");
+            b.onClick = [this, i] { intervalAttachment->setValueAsCompleteGesture ((float) i); };
+            intervalButtons[(size_t) i] = &b;
+        }
+        intervalAttachment = std::make_unique<juce::ParameterAttachment> (
+            *state.getParameter (ParamID::shimmerInterval),
+            [this] (float value)
+            {
+                const int chosen = juce::roundToInt (value);
+                for (int i = 0; i < 2; ++i)
+                    intervalButtons[(size_t) i]->setToggleState (i == chosen, juce::dontSendNotification);
+            });
+        intervalAttachment->sendInitialUpdate();
+    }
+
     // The Space reverb: the big Space knob sets its level, this tile everything else.
-    auto& space = add (ModuleKind::spaceFilter, "SPACE", true);
+    auto& space = add (ModuleKind::spaceFilter, "SPACE", false);
     {
         auto& cuts = space.addHeaderToggle ("CUTS");
         cuts.setTooltip ("Switch the reverb's low and high cuts on or off");
@@ -776,6 +941,15 @@ ModuleSettings ModulesPanel::readSettings() const
     s.octavesOn = on (ParamID::octavesOn);
     s.binauralOn = on (ParamID::binauralOn);
     s.spaceFilterOn = on (ParamID::spaceFilterOn);
+    s.tapeWow = value (ParamID::tapeWow);
+    s.tapeFlutter = value (ParamID::tapeFlutter);
+    s.tapeDrive = value (ParamID::tapeDrive);
+    s.tapeAge = value (ParamID::tapeAge);
+    s.shimmerAmount = value (ParamID::shimmerAmount);
+    s.shimmerRise = value (ParamID::shimmerRise);
+    s.shimmerInterval = juce::roundToInt (value (ParamID::shimmerInterval));
+    s.tapeOn = on (ParamID::tapeOn);
+    s.shimmerOn = on (ParamID::shimmerOn);
     return s;
 }
 
@@ -787,7 +961,9 @@ void ModulesPanel::resetAll()
                       ParamID::compressorOn, ParamID::compressor, ParamID::octavesOn, ParamID::octaveDown2, ParamID::octaveDown1,
                       ParamID::octaveRoot, ParamID::octaveUp1, ParamID::octaveUp15, ParamID::octaveUp2,
                       ParamID::binauralOn, ParamID::binauralRate, ParamID::binauralAmount,
-                      ParamID::spaceFilterOn, ParamID::spaceLow, ParamID::spaceHigh, ParamID::spaceDecay, ParamID::spaceSize })
+                      ParamID::spaceFilterOn, ParamID::spaceLow, ParamID::spaceHigh, ParamID::spaceDecay, ParamID::spaceSize,
+                      ParamID::tapeOn, ParamID::tapeWow, ParamID::tapeFlutter, ParamID::tapeDrive, ParamID::tapeAge,
+                      ParamID::shimmerOn, ParamID::shimmerAmount, ParamID::shimmerRise, ParamID::shimmerInterval })
     {
         auto* p = state.getParameter (id);
         p->beginChangeGesture();
@@ -825,7 +1001,7 @@ void ModulesPanel::paint (juce::Graphics& g)
     drawTrackedText (g, "MODULES", { 0.0f, 0.0f, 120.0f, headingHeight }, capFont, juce::Justification::centredLeft, Colours::gold);
     const float x = trackedTextWidth ("MODULES", capFont) + 18.0f;
     const juce::String note = bloom ? "How Bloom shapes the sound. Tap a light to switch a module on or off."
-                                    : "Most modules shape Bloom and rest while Grain plays. Binaural and Space work in both.";
+                                    : "Most modules shape Bloom and rest while Grain plays. Binaural, Tape, Shimmer and Space work in both.";
     drawTrackedText (g, note, { x, 0.0f, w - x - 140.0f, headingHeight }, Fonts::sans (12.0f), juce::Justification::centredLeft, Colours::muted);
 }
 

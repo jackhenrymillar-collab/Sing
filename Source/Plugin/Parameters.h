@@ -67,6 +67,17 @@ namespace ParamID
     // size too; now it is the reverb's level alone.
     inline constexpr auto spaceDecay     = "spacedecay";
     inline constexpr auto spaceSize      = "spacesize";
+    // Tape: wow, flutter, saturation and a soft high roll-off. Shimmer: a pitched-up copy
+    // fed into the Space reverb.
+    inline constexpr auto tapeOn          = "tapeon";
+    inline constexpr auto tapeWow         = "tapewow";
+    inline constexpr auto tapeFlutter     = "tapeflutter";
+    inline constexpr auto tapeDrive       = "tapedrive";
+    inline constexpr auto tapeAge         = "tapeage";
+    inline constexpr auto shimmerOn       = "shimmeron";
+    inline constexpr auto shimmerAmount   = "shimmeramount";
+    inline constexpr auto shimmerRise     = "shimmerrise";
+    inline constexpr auto shimmerInterval = "shimmerinterval";
     // Movement: an orbit for each big knob that can move, Wander for the loop, and the
     // strip that sets the shape and speed for all of them.
     inline constexpr auto orbitStretch   = "orbitstretch";
@@ -120,5 +131,6 @@ juce::String formatDecibels (float db);
 juce::String formatHz (float hz);
 juce::String formatCents (float cents);
 juce::String formatOrbit (float percent);
+juce::StringArray shimmerIntervalNames();
 
 } // namespace sing

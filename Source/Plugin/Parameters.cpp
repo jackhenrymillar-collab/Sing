@@ -72,6 +72,8 @@ juce::StringArray filterSlopeNames() { return { "Sharp", "6 dB", "12 dB" }; }
 
 juce::StringArray moveShapeNames() { return { "Drift", "Wave", "Breath" }; }
 
+juce::StringArray shimmerIntervalNames() { return { "Octave", "Fifth" }; }
+
 namespace
 {
     constexpr float kMoveBars[] = { 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 16.0f, 32.0f };
@@ -189,6 +191,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::spaceDecay, v }, "Space Decay",
                                                        skewed (Space::minDecaySeconds, Space::maxDecaySeconds, 6.0f), 6.3f, withText (formatSeconds)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::spaceSize, v }, "Space Size", Range { 0.0f, 100.0f, 0.1f }, 67.5f, withText (formatPercent)));
+    // Tape and Shimmer start off.
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::tapeOn, v }, "Tape On", false));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::tapeWow, v }, "Tape Wow", Range { 0.0f, 100.0f, 0.1f }, 30.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::tapeFlutter, v }, "Tape Flutter", Range { 0.0f, 100.0f, 0.1f }, 20.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::tapeDrive, v }, "Tape Drive", Range { 0.0f, 100.0f, 0.1f }, 35.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::tapeAge, v }, "Tape Age", Range { 0.0f, 100.0f, 0.1f }, 40.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::shimmerOn, v }, "Shimmer On", false));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::shimmerAmount, v }, "Shimmer Amount", Range { 0.0f, 100.0f, 0.1f }, 40.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::shimmerRise, v }, "Shimmer Rise", Range { 0.0f, 100.0f, 0.1f }, 50.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::shimmerInterval, v }, "Shimmer Interval", shimmerIntervalNames(), 0));
     // Also the host's bypass switch (see SingProcessor::getBypassParameter). Clicking the evening star toggles it.
     // Movement. Every orbit starts at 0, so sessions from before it sound the same.
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::orbitStretch, v }, "Stretch Orbit", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatOrbit)));
