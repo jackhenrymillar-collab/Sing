@@ -148,7 +148,7 @@ bool BloomVoice::start (const LoopSource& src, double bufferPosition, uint32_t s
     hop = size / overlap;
     fftChunks = std::max (1, size / 4 / butterfliesPerUnit);
 
-    readPosition = std::fmod (std::max (0.0, bufferPosition), (double) src.size());
+    readPosition = src.place (std::max (0.0, bufferPosition), lastPosition (src));
     // The play light shows the note's start while its first frame is built, not wherever
     // this voice's last note had got to.
     currentFramePosition = buildFramePosition = readPosition;
@@ -205,7 +205,15 @@ void BloomVoice::setSource (const LoopSource& src) noexcept
     // Keep the read position at the same place in the voice.
     const double voicePosition = source->toVoicePosition (readPosition);
     source = &src;
-    readPosition = src.fromVoicePosition (voicePosition);
+    readPosition = src.place (src.fromVoicePosition (voicePosition), lastPosition (src));
+}
+
+double BloomVoice::lastPosition (const LoopSource& src) noexcept
+{
+    // With no loop, each frame's window starts at the read position, so the note holds at
+    // the last frame, whose window ends at the end of the voice.
+    const auto* analysis = static_cast<const BloomAnalysis*> (src.analysis (StretchMode::bloom));
+    return analysis != nullptr && ! analysis->wraps() ? analysis->lastFrameStart() : -1.0;
 }
 
 void BloomVoice::stop() noexcept
@@ -225,18 +233,19 @@ void BloomVoice::nudge (double samples) noexcept
 {
     if (! active || source == nullptr || samples == 0.0)
         return;
-    const auto length = (double) source->size();
-    readPosition = std::fmod (readPosition + samples, length);
-    if (readPosition < 0.0)
-        readPosition += length;
+    readPosition = source->place (readPosition + samples, lastPosition (*source));
 }
 
 double BloomVoice::playPosition (double offsetSeconds) const noexcept
 {
     if (! active || source == nullptr)
         return 0.0;
-    const double p = currentFramePosition + currentFrameAdvance * (double) pos / std::max (1, hop)
-                   + offsetSeconds * source->sampleRate();
+    double p = currentFramePosition + currentFrameAdvance * (double) pos / std::max (1, hop)
+             + offsetSeconds * source->sampleRate();
+    // With no loop the window starts at the read position: show its middle, so the read zone
+    // drawn round it starts where the window does.
+    if (! source->wraps())
+        p = source->place (p, lastPosition (*source)) + 0.5 * windowSamples();
     return source->toVoicePosition (p);
 }
 
@@ -306,20 +315,17 @@ void BloomVoice::beginFrame() noexcept
     const double voiceRate = source->sampleRate();
     outBinHz = (float) (hostRate / size);
     const int frames = analysis->numFrames();
-    const double length = (double) source->size();
 
     frameLayerCount = std::clamp (params.numLayers, 1, maxLayers);
     for (int i = 0; i < frameLayerCount; ++i)
     {
         const auto& layer = params.layers[(size_t) i];
         auto& f = frameLayers[(size_t) i];
-        double at = std::fmod (readPosition + layer.offsetSeconds * voiceRate, length);
-        if (at < 0.0)
-            at += length;
+        const double at = source->place (readPosition + layer.offsetSeconds * voiceRate, lastPosition (*source));
         const double frame = at / analysis->hop();
         const int a = (int) frame;
-        f.frameA = a % frames;
-        f.frameB = (a + 1) % frames;
+        f.frameA = analysis->wraps() ? a % frames : std::min (a, frames - 1);
+        f.frameB = analysis->wraps() ? (a + 1) % frames : std::min (a + 1, frames - 1);
         f.frameMix = (float) (frame - a);
 
         const float pitch = std::max (layer.pitchRatio, 1.0e-3f);
@@ -461,18 +467,15 @@ void BloomVoice::beginFrame() noexcept
         float strength = 0.0f;
         for (const auto& o : analysis->onsets())
         {
-            double d = std::fmod (o.position - readPosition, length);
-            if (d < 0.0)
-                d += length;
-            if (d > length * 0.5)
-                d -= length;   // the nearest way round the loop
+            // From the window's middle, the nearest way round the loop.
+            const double d = source->distance (analysis->wraps() ? readPosition : readPosition + half, o.position);
             if (d > -half && d <= half)
                 strength = std::max (strength, o.strength);
         }
         const float pull = std::min (1.0f, strength * params.onsets);
         buildFrameAdvance += (realTime - buildFrameAdvance) * (double) pull;
     }
-    readPosition = std::fmod (readPosition + buildFrameAdvance, length);
+    readPosition = source->place (readPosition + buildFrameAdvance, lastPosition (*source));
 }
 
 float BloomVoice::filterGain (int bin) const noexcept

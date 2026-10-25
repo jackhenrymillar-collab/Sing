@@ -125,7 +125,9 @@ std::shared_ptr<const LoopSource> LoopSource::build (const float* const* input,
     bool seamMatched = false;
     // A loop that starts at the very beginning of the voice, or ends at its very end, has
     // nothing to join to and keeps its plain cut.
-    if (settings.direction != LoopDirection::pingPong && settings.fade < seamFade && settings.length > 8 * seamFade
+    if (settings.direction == LoopDirection::fromStart)
+        settings.fade = 0;
+    if (settings.direction != LoopDirection::pingPong && settings.direction != LoopDirection::fromStart && settings.fade < seamFade && settings.length > 8 * seamFade
         && settings.start >= seamFade)
         if (const int matched = matchSeam (input, numChannels, numSamples, sampleRate, settings.start, settings.length); matched > 0)
         {
@@ -151,6 +153,9 @@ std::shared_ptr<const LoopSource> LoopSource::build (const float* const* input,
                 std::reverse (loop.begin(), loop.end());
                 break;
 
+            case LoopDirection::fromStart:
+                break;   // Fade is 0, so this is the voice from Start, as recorded
+
             case LoopDirection::pingPong:
             {
                 // Bounce: no seam to hide, so use the raw loop without the crossfade.
@@ -165,11 +170,12 @@ std::shared_ptr<const LoopSource> LoopSource::build (const float* const* input,
         source->bufferSize = (int) loop.size();
 
         // Pad with wrapped-around samples so readers can interpolate across the seam
-        // without checking for it.
+        // without checking for it. With no loop, the ends repeat instead.
         const int n = (int) loop.size();
+        const bool wrap = settings.direction != LoopDirection::fromStart;
         std::vector<float> padded ((size_t) (guardBefore + n + guardAfter));
         for (int i = -guardBefore; i < n + guardAfter; ++i)
-            padded[(size_t) (i + guardBefore)] = loop[(size_t) (((i % n) + n) % n)];
+            padded[(size_t) (i + guardBefore)] = loop[(size_t) (wrap ? ((i % n) + n) % n : std::clamp (i, 0, n - 1))];
 
         source->channels.push_back (std::move (padded));
     }
@@ -184,13 +190,12 @@ std::shared_ptr<const LoopSource> LoopSource::build (const float* const* input,
 double LoopSource::toVoicePosition (double b) const noexcept
 {
     const double n = (double) bufferSize;
-    b = std::fmod (b, n);
-    if (b < 0.0)
-        b += n;
+    b = place (b);
 
     switch (loop.direction)
     {
-        case LoopDirection::forward:  return (double) loop.start + b;
+        case LoopDirection::forward:
+        case LoopDirection::fromStart: return (double) loop.start + b;
         case LoopDirection::backward: return (double) loop.start + (n - 1.0 - b);
         case LoopDirection::pingPong:
         {
@@ -208,7 +213,8 @@ double LoopSource::fromVoicePosition (double v) const noexcept
 
     switch (loop.direction)
     {
-        case LoopDirection::forward:  return offset;
+        case LoopDirection::forward:
+        case LoopDirection::fromStart: return offset;
         case LoopDirection::backward: return n - 1.0 - offset;
         case LoopDirection::pingPong: return std::min (offset, (double) loop.length - 1.0);
     }

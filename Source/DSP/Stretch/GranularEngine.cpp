@@ -78,7 +78,7 @@ void GranularEngine::start (const LoopSource& source, double bufferPosition) noe
 
     current = &source;
     sourceScale = source.sampleRate() / hostRate;
-    head = wrap (bufferPosition, (double) source.size());
+    head = source.place (bufferPosition);
     speed = params.hold ? 0.0f : params.speed;
     rate = params.pitchRatio;
     phaseReference = head;
@@ -102,7 +102,7 @@ void GranularEngine::setSource (const LoopSource& source) noexcept
     const double voicePosition = current->toVoicePosition (head);
     current = &source;
     sourceScale = source.sampleRate() / hostRate;
-    head = wrap (source.fromVoicePosition (voicePosition), (double) source.size());
+    head = source.place (source.fromVoicePosition (voicePosition));
     phaseReference = head;
 }
 
@@ -130,7 +130,7 @@ void GranularEngine::nudge (double samples) noexcept
 {
     if (current == nullptr || samples == 0.0)
         return;
-    head = wrap (head + samples, (double) current->size());
+    head = current->place (head + samples, lastStart());
     followHead();
 }
 
@@ -159,11 +159,15 @@ double GranularEngine::alignToPhase (double target) const noexcept
     if (! settings.phaseAlign || period < 2.0)
         return target;
 
-    const double n = (double) current->size();
-    double diff = std::fmod (target - phaseReference, n);
-    if (diff > 0.5 * n) diff -= n;
-    if (diff < -0.5 * n) diff += n;
+    const double diff = current->distance (phaseReference, target);
     return phaseReference + std::round (diff / period) * period;
+}
+
+double GranularEngine::lastStart() const noexcept
+{
+    // With no loop, the last place a grain can start and still end inside the voice.
+    const double span = (double) grainLength * (double) rate * sourceScale;
+    return std::max (0.0, (double) current->size() - 2.0 - span);
 }
 
 void GranularEngine::followHead() noexcept
@@ -178,11 +182,10 @@ void GranularEngine::followHead() noexcept
     if (! settings.phaseAlign)
         return;
     const double n = (double) current->size();
+    const bool wraps = current->wraps();
     for (int guard = 0; guard < 4096; ++guard)
     {
-        double diff = std::fmod (head - phaseReference, n);
-        if (diff > 0.5 * n) diff -= n;
-        if (diff < -0.5 * n) diff += n;
+        const double diff = current->distance (phaseReference, head);
         const double period = (double) current->periodAt (phaseReference);
         if (period < 2.0)
         {
@@ -191,9 +194,9 @@ void GranularEngine::followHead() noexcept
             return;
         }
         if (diff > period)
-            phaseReference = wrap (phaseReference + period, n);
+            phaseReference = wraps ? wrap (phaseReference + period, n) : phaseReference + period;
         else if (diff < -period)
-            phaseReference = wrap (phaseReference - period, n);
+            phaseReference = wraps ? wrap (phaseReference - period, n) : phaseReference - period;
         else
             return;
     }
@@ -249,7 +252,21 @@ void GranularEngine::spawnGrain (int age) noexcept
     // loop back exactly.
     const double target = head + (double) (jitter * nextRandom())
                         + (double) (rate - speed) * sourceScale * (double) g.age;
-    g.position = wrap (alignToPhase (target), n);
+    if (current->wraps())
+        g.position = wrap (alignToPhase (target), n);
+    else
+    {
+        // No loop: a grain never reads before Start or past the end. Jitter that would go
+        // out of range is turned back (so the cloud keeps its spread), then the grain is kept
+        // in phase if that still fits.
+        const double last = lastStart();
+        double t = target;
+        if (t < 0.0) t = -t;
+        if (t > last) t = std::max (0.0, 2.0 * last - t);
+        t = std::min (t, last);
+        const double aligned = alignToPhase (t);
+        g.position = aligned >= 0.0 && aligned <= last ? aligned : t;
+    }
 
     const float norm = levelCompensation (jitter);
     const float theta = (settings.stereoWidth * nextRandom() + 1.0f) * 0.78539816f;   // pi / 4
@@ -264,6 +281,7 @@ void GranularEngine::renderGrain (Grain& g, float* left, float* right, int numSa
     const float* inR = src.channel (1);
     const bool stereo = src.numChannels() > 1;
     const double n = (double) src.size();
+    const bool wraps = src.wraps();
     const double step = (double) rate * src.sampleRate() / hostRate;
     const float toWindow = (float) windowSize / (float) g.length;
 
@@ -286,7 +304,7 @@ void GranularEngine::renderGrain (Grain& g, float* left, float* right, int numSa
 
         pos += step;
         if (pos >= n)
-            pos -= n;
+            pos = wraps ? pos - n : n - 1.0;
     }
 
     g.position = pos;
@@ -324,8 +342,12 @@ void GranularEngine::process (float* left, float* right, int numSamples) noexcep
                 if (g.source != nullptr)
                     renderGrain (g, left + done, right + done, len);
 
-            head = wrap (head + (double) speed * sourceScale * (double) len, n);
-            phaseReference = wrap (phaseReference + (double) rate * sourceScale * (double) len, n);
+            // With no loop the head stops at the end of the voice and holds there.
+            head = current->wraps() ? wrap (head + (double) speed * sourceScale * (double) len, n)
+                                    : current->place (head + (double) speed * sourceScale * (double) len, lastStart());
+            phaseReference += (double) rate * sourceScale * (double) len;
+            if (current->wraps())
+                phaseReference = wrap (phaseReference, n);
             followHead();
             samplesToNextGrain -= (double) len;
             done += len;

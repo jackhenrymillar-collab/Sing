@@ -66,8 +66,10 @@ private:
     void rebuildBars (float pixelScale);
 
     juce::AudioProcessorValueTreeState& state;
-    juce::ParameterAttachment startAttachment, lengthAttachment, fadeAttachment;
+    juce::ParameterAttachment startAttachment, lengthAttachment, fadeAttachment, directionAttachment;
     float startPct = 30.0f, lengthPct = 40.0f, fadePct = 25.0f;
+    bool noLoop = false;   // From start: lit from Start to the end, with only a Start handle
+    float shownLengthPct() const noexcept { return noLoop ? 100.0f - startPct : lengthPct; }
 
     VoiceData::Ptr voice;
     juce::Image bars;

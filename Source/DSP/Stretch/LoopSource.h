@@ -2,7 +2,9 @@
 
 #include "Voice/VoiceAnalysis.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -13,7 +15,8 @@ enum class LoopDirection
 {
     forward,
     backward,
-    pingPong
+    pingPong,
+    fromStart   // no loop: plays on from Start to the end of the voice, and holds there
 };
 
 enum class StretchMode
@@ -74,7 +77,9 @@ struct SourceAnalysis
 // - Forward:  the loop, with its seam already crossfaded.
 // - Backward: the same, reversed.
 // - Back & forth: the loop forwards, then backwards (2 * length - 2 samples, no seam).
-// So engines only ever read forwards with wrap-around, whatever Direction is.
+// - From start: no loop. The voice from Start to its end; nothing wraps, and the engines
+//   hold at the end instead (wraps() is false). Nothing before Start is ever heard.
+// So engines only ever read forwards, with wrap-around unless wraps() says otherwise.
 class LoopSource
 {
 public:
@@ -91,8 +96,38 @@ public:
     const LoopSettings& settings() const noexcept { return loop; }
     int effectiveFade() const noexcept { return fadeUsed; }
 
+    // False for From start: the buffer is read straight, never round from its end to its start.
+    bool wraps() const noexcept { return loop.direction != LoopDirection::fromStart; }
+
+    // A play buffer position brought into range: wrapped round, or for From start held
+    // between the start and `last` (by default the final sample).
+    double place (double position, double last = -1.0) const noexcept
+    {
+        const double n = (double) bufferSize;
+        if (! wraps())
+            return position < 0.0 ? 0.0 : std::min (position, last >= 0.0 ? last : n - 1.0);
+        position = std::fmod (position, n);
+        if (position < 0.0)
+            position += n;
+        return position < n ? position : 0.0;
+    }
+
+    // From a to b, the short way round the loop (or straight, for From start).
+    double distance (double a, double b) const noexcept
+    {
+        double d = b - a;
+        if (! wraps())
+            return d;
+        const double n = (double) bufferSize;
+        d = std::fmod (d, n);
+        if (d > 0.5 * n) d -= n;
+        if (d < -0.5 * n) d += n;
+        return d;
+    }
+
     // Samples of the play buffer. Index must be in [0, size()). For 4-point interpolation,
-    // index -1 and size() to size() + 2 are also valid and hold the wrapped-around samples.
+    // index -1 and size() to size() + 2 are also valid and hold the wrapped-around samples
+    // (for From start, the first and last samples repeated).
     const float* channel (int ch) const noexcept
     {
         return channels[(size_t) (ch < numChannels() ? ch : 0)].data() + guardBefore;

@@ -142,6 +142,7 @@ private:
     };
 
     void beginFrame() noexcept;
+    static double lastPosition (const LoopSource&) noexcept;   // From start: where the note holds
     float harmonicsGain (const BloomAnalysis& analysis, int frame, double bufferPosition, float pitch) const noexcept;
     void runUnit (int unit) noexcept;
     void runDueUnits() noexcept;

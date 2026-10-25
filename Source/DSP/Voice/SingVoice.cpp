@@ -229,9 +229,12 @@ void SingVoice::updateMovement (int numSamples, bool jump) noexcept
     const float formantNorm = (baseSettings.formantSemitones + 12.0f) / 24.0f;
     target[moveFormant] = moved (moveFormant, formantNorm) - formantNorm;
     // Wander: a share of the loop either side of where the note would be, up to half the
-    // loop each way at 100%.
+    // loop each way at 100%. With no loop (From start) only forward of it, up to the whole
+    // voice after Start, so nothing before Start is heard.
+    const bool forwardOnly = source != nullptr && ! source->wraps();
+    const float wander = m.amounts[moveWander] > 0.0f ? movement::value (m.shape, cycles, movement::targetSeed (seed, moveWander)) : -1.0f;
     target[moveWander] = m.amounts[moveWander] > 0.0f
-        ? 0.5f * m.amounts[moveWander] * movement::value (m.shape, cycles, movement::targetSeed (seed, moveWander))
+        ? (forwardOnly ? 0.5f * m.amounts[moveWander] * (wander + 1.0f) : 0.5f * m.amounts[moveWander] * wander)
         : 0.0f;
 
     // Ease toward the new place over about 30 ms: switching shape, a jump in the song's

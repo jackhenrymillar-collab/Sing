@@ -164,6 +164,7 @@ if (SING_BUILD_TESTS)
     add_executable (SingDSPTests
         Tests/BloomTests.cpp
         Tests/EffectsTests.cpp
+        Tests/FromStartTests.cpp
         Tests/MovementTests.cpp
         Tests/StretchTests.cpp
         Tests/VoiceTests.cpp)

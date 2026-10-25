@@ -25,6 +25,13 @@ forwards:
   shortens the loop by the Fade length.
 - **Backward:** the same buffer, reversed.
 - **Back & forth:** the loop forwards then backwards. A bounce has no seam, so no crossfade.
+- **From start:** no loop. The buffer is the voice from Start to its end, and `wraps()` is
+  false, so engines read it straight and hold at the end instead of wrapping: the granular
+  head stops where a last grain still fits, grains whose jitter would reach before Start are
+  turned back, and Bloom's windows start at their frame (not centred on it), so the first
+  frame begins exactly at Start. Nothing from before Start, or from the end, blends into a
+  note at Start. Length and Fade don't apply, Wander only moves forward, and Bloom's Window
+  can grow to 98% of everything after Start.
 
 Because Direction is baked into the buffer, engines never deal with it. `toVoicePosition`
 maps a buffer position back to the voice for the waveform's play light.

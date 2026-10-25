@@ -34,6 +34,12 @@ public:
     int numBins() const noexcept { return bins; }
     int numFrames() const noexcept { return frames; }
     double hop() const noexcept { return hopSamples; }     // play buffer samples per frame
+
+    // True when the frames read round the loop, each centred on its position. False for From
+    // start: each window starts at its frame's position and nothing wraps, so the last frame
+    // starts at lastFrameStart() and ends at the end of the voice.
+    bool wraps() const noexcept { return wrapped; }
+    double lastFrameStart() const noexcept { return (frames - 1) * hopSamples; }
     float binHz() const noexcept { return binSpacing; }
     float envelopeHz() const noexcept { return envSpacing; }
 
@@ -104,6 +110,7 @@ private:
     double hopSamples = 1.0;
     float binSpacing = 1.0f, envSpacing = 1.0f;
     bool locked = false;
+    bool wrapped = true;
     std::vector<uint16_t> fineData;
     std::vector<float> envData;
     std::vector<int16_t> peakData;

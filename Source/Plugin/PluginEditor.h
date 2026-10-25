@@ -73,7 +73,7 @@ private:
     juce::int64 shownVoice = -1;
 
     // Loop settings
-    std::array<std::unique_ptr<ui::PillToggle>, 3> directionButtons;
+    std::array<std::unique_ptr<ui::PillToggle>, 4> directionButtons;
     std::unique_ptr<juce::ParameterAttachment> directionAttachment;
     ui::TextDragger loopStart { "Start" }, loopLength { "Length" }, loopFade { "Fade" };
     ui::TextDragger wanderDragger { "Wander" };

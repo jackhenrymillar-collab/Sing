@@ -37,6 +37,8 @@ WaveformView::WaveformView (juce::AudioProcessorValueTreeState& s)
       startAttachment (*s.getParameter (ParamID::loopStart), [this] (float v) { startPct = v; repaint(); }),
       lengthAttachment (*s.getParameter (ParamID::loopLength), [this] (float v) { lengthPct = v; repaint(); }),
       fadeAttachment (*s.getParameter (ParamID::loopFade), [this] (float v) { fadePct = v; repaint(); }),
+      directionAttachment (*s.getParameter (ParamID::direction),
+                           [this] (float v) { noLoop = juce::roundToInt (v) == (int) LoopDirection::fromStart; repaint(); }),
       stretchParam (s.getRawParameterValue (ParamID::stretch)),
       holdParam (s.getRawParameterValue (ParamID::hold))
 {
@@ -45,6 +47,7 @@ WaveformView::WaveformView (juce::AudioProcessorValueTreeState& s)
     startAttachment.sendInitialUpdate();
     lengthAttachment.sendInitialUpdate();
     fadeAttachment.sendInitialUpdate();
+    directionAttachment.sendInitialUpdate();
 }
 
 void WaveformView::setDarkSky (bool dark)
@@ -114,19 +117,19 @@ float WaveformView::loopLeft() const noexcept
 
 float WaveformView::loopRight() const noexcept
 {
-    return waveWidth * juce::jlimit (0.0f, 1.0f, (startPct + lengthPct) * 0.01f);
+    return waveWidth * juce::jlimit (0.0f, 1.0f, (startPct + shownLengthPct()) * 0.01f);
 }
 
 float WaveformView::fadeWidth() const noexcept
 {
-    return (loopRight() - loopLeft()) * fadePct * 0.01f * 0.5f;
+    return noLoop ? 0.0f : (loopRight() - loopLeft()) * fadePct * 0.01f * 0.5f;
 }
 
 void WaveformView::rebuildBars (float pixelScale)
 {
     barsScale = pixelScale;
     barsStart = startPct;
-    barsLength = lengthPct;
+    barsLength = shownLengthPct();
     barsVoice = voice != nullptr ? voice->getId() : 0;
 
     const int w = juce::roundToInt (width * pixelScale), h = juce::roundToInt (height * pixelScale);
@@ -181,7 +184,7 @@ void WaveformView::rebuildBars (float pixelScale)
 void WaveformView::paint (juce::Graphics& g)
 {
     const float pixelScale = std::max (1.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
-    if (std::abs (pixelScale - barsScale) > 0.01f || ! bars.isValid() || std::abs (barsStart - startPct) > 1.0e-4f || std::abs (barsLength - lengthPct) > 1.0e-4f
+    if (std::abs (pixelScale - barsScale) > 0.01f || ! bars.isValid() || std::abs (barsStart - startPct) > 1.0e-4f || std::abs (barsLength - shownLengthPct()) > 1.0e-4f
         || barsVoice != (voice != nullptr ? voice->getId() : 0))
         rebuildBars (pixelScale);
 
@@ -205,7 +208,7 @@ void WaveformView::paint (juce::Graphics& g)
 
     g.drawImageTransformed (bars, juce::AffineTransform::scale (1.0f / barsScale));
 
-    if (loopW > 1.0f)
+    if (loopW > 1.0f && ! noLoop)
     {
         // The fades, drawn as ramps.
         const float fade = std::min (fadeWidth(), loopW * 0.5f);
@@ -218,9 +221,11 @@ void WaveformView::paint (juce::Graphics& g)
         g.strokePath (ramps, juce::PathStrokeType (1.4f));
     }
 
-    // Handles at each end of the loop.
+    // Handles at each end of the loop (with no loop, just Start).
     for (const float x : { left, right })
     {
+        if (noLoop && x == right)
+            continue;
         g.setColour (Colours::gold.withAlpha (grab != Grab::none ? 1.0f : 0.9f));
         g.fillRect (x - 1.0f, top - 16.0f, 2.0f, waveHeight + 32.0f);
     }
@@ -240,7 +245,7 @@ void WaveformView::paintLights (juce::Graphics& g, juce::Rectangle<float> region
 
     // The loop, as 0 to 1 across the waveform. Read zones wrap around inside it.
     const float loopStart = juce::jlimit (0.0f, 1.0f, startPct * 0.01f);
-    const float loopEnd = juce::jlimit (loopStart, 1.0f, (startPct + lengthPct) * 0.01f);
+    const float loopEnd = juce::jlimit (loopStart, 1.0f, (startPct + shownLengthPct()) * 0.01f);
     const float loopLen = loopEnd - loopStart;
     const auto toX = [] (float p) { return margin + waveWidth * juce::jlimit (0.0f, 1.0f, p); };
     const auto fillSpan = [&] (float from, float to, auto&& fill)
@@ -371,6 +376,9 @@ WaveformView::Grab WaveformView::grabAt (juce::Point<float> p) const noexcept
 {
     const float left = margin + loopLeft(), right = margin + loopRight();
     const float dl = std::abs (p.x - left), dr = std::abs (p.x - right);
+    // With no loop there is only Start: its handle, or anywhere after it, moves it.
+    if (noLoop)
+        return dl <= 8.0f || (p.x > left && p.x < right) ? Grab::start : Grab::none;
     if (std::min (dl, dr) <= 8.0f)
         return dl <= dr ? Grab::start : Grab::end;
     if (p.x > left && p.x < right)
@@ -393,7 +401,7 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
     grabLengthPct = lengthPct;
     if (grab == Grab::start || grab == Grab::body)
         startAttachment.beginGesture();
-    if (grab == Grab::start || grab == Grab::end)
+    if ((grab == Grab::start && ! noLoop) || grab == Grab::end)
         lengthAttachment.beginGesture();
     repaint();
 }
@@ -407,7 +415,9 @@ void WaveformView::mouseDrag (const juce::MouseEvent& e)
     const float deltaPct = (float) e.getDistanceFromDragStartX() / waveWidth * 100.0f * fine;
     const float end = grabStartPct + grabLengthPct;
 
-    if (grab == Grab::start)
+    if (grab == Grab::start && noLoop)
+        startAttachment.setValueAsPartOfGesture (juce::jlimit (0.0f, 100.0f - kMinLengthPct, grabStartPct + deltaPct));
+    else if (grab == Grab::start)
     {
         const float s = juce::jlimit (0.0f, end - kMinLengthPct, grabStartPct + deltaPct);
         startAttachment.setValueAsPartOfGesture (s);
@@ -429,7 +439,7 @@ void WaveformView::mouseUp (const juce::MouseEvent&)
 {
     if (grab == Grab::start || grab == Grab::body)
         startAttachment.endGesture();
-    if (grab == Grab::start || grab == Grab::end)
+    if ((grab == Grab::start && ! noLoop) || grab == Grab::end)
         lengthAttachment.endGesture();
     grab = Grab::none;
     repaint();
@@ -441,6 +451,12 @@ void WaveformView::mouseDoubleClick (const juce::MouseEvent& e)
     if (grabAt (e.position) != Grab::none)
         return;
     const float centrePct = (e.position.x - margin) / waveWidth * 100.0f;
+    // With no loop: Start goes where you clicked.
+    if (noLoop)
+    {
+        startAttachment.setValueAsCompleteGesture (juce::jlimit (0.0f, 100.0f - kMinLengthPct, centrePct));
+        return;
+    }
     startAttachment.setValueAsCompleteGesture (juce::jlimit (0.0f, 100.0f - lengthPct, centrePct - lengthPct * 0.5f));
 }
 

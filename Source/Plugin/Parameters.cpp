@@ -5,7 +5,7 @@ namespace sing
 
 juce::StringArray directionNames()
 {
-    return { "Forward", "Backward", "Back & forth" };
+    return { "Forward", "Backward", "Back & forth", "From start" };
 }
 
 juce::StringArray engineNames()
