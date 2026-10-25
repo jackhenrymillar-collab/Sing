@@ -164,6 +164,7 @@ if (SING_BUILD_TESTS)
     add_executable (SingDSPTests
         Tests/BloomTests.cpp
         Tests/EffectsTests.cpp
+        Tests/MovementTests.cpp
         Tests/StretchTests.cpp
         Tests/VoiceTests.cpp)
     target_link_libraries (SingDSPTests PRIVATE SingDSP Catch2::Catch2WithMain)

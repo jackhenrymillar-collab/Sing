@@ -20,7 +20,8 @@ namespace sing
 // the voice's waveform, the loop row, the knobs, every module, and the bottom row.
 // The editor scales it as a whole when the window is resized.
 class SingPanel final : public juce::Component,
-                        public juce::FileDragAndDropTarget
+                        public juce::FileDragAndDropTarget,
+                        private juce::AudioProcessorValueTreeState::Listener
 {
 public:
     explicit SingPanel (SingProcessor&);
@@ -75,6 +76,7 @@ private:
     std::array<std::unique_ptr<ui::PillToggle>, 3> directionButtons;
     std::unique_ptr<juce::ParameterAttachment> directionAttachment;
     ui::TextDragger loopStart { "Start" }, loopLength { "Length" }, loopFade { "Fade" };
+    ui::TextDragger wanderDragger { "Wander" };
 
     // Knobs
     enum KnobId { attack, release, stretch, spread, formant, air, space, numKnobs };
@@ -88,6 +90,15 @@ private:
     std::unique_ptr<juce::ParameterAttachment> engineAttachment;
     bool bloomEngine = false;
     ui::TextDragger voicesDragger { "Voices", true }, glideDragger { "Glide", true }, outputDragger { "Output", true };
+
+    // Movement: the shape, the speed (seconds, or bars when synced), Sync and Each note.
+    ui::ShapeButton shapeButton;
+    std::unique_ptr<juce::ParameterAttachment> shapeAttachment, syncAttachment;
+    ui::TextDragger speedDragger { "Speed", true }, barsDragger { "Every", true };
+    ui::PillToggle syncButton { "SYNC", 32.0f, 11.0f }, eachNoteButton { "EACH NOTE", 32.0f, 11.0f };
+    void updateMovementStrip();
+    void parameterChanged (const juce::String&, float) override;
+    std::atomic<bool> movementDirty { true };
 
     ui::SaveOverlay saveOverlay;
 

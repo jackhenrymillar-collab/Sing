@@ -18,9 +18,11 @@ namespace
         int direction;
         int engine;   // 0 Grain, 1 Bloom
         float air, space;
+        // Movement (presets that leave it out stay still).
+        float orbitSpread = 0.0f, orbitFormant = 0.0f, wander = 0.0f;
     };
 
-    // The four presets from the mockup, and two for Bloom. Their voices are generated
+    // The four presets from the mockup, two for Bloom and one that moves. Their voices are generated
     // stand-ins until the recorded factory voices exist.
     constexpr FactoryPreset kFactory[] = {
         //  name            voice                      attack release stretch spread formant  start length fade  dir engine air    space
@@ -30,6 +32,8 @@ namespace
         { "Last Light",   PlaceholderVowel::breath,  5.0f, 12.0f,  90.0f, 62.0f,  0.0f,   18.0f, 34.0f, 40.0f, 2,  0,     10.0f, 65.0f },
         { "Bloom Halo",   PlaceholderVowel::ooh,     3.0f, 10.0f,  85.0f, 45.0f,  0.0f,   30.0f, 40.0f, 28.0f, 0,  1,     30.0f, 70.0f },
         { "Slow Petals",  PlaceholderVowel::ah,      4.5f, 14.0f,  96.0f, 70.0f, -3.0f,   22.0f, 36.0f, 35.0f, 0,  1,     20.0f, 85.0f },
+        // Movement: Spread and Formant drift on every note, and the loop wanders.
+        { "Drifting Choir", PlaceholderVowel::ah,    3.0f, 10.0f,  80.0f, 45.0f, -2.0f,   20.0f, 55.0f, 30.0f, 0,  0,     25.0f, 60.0f,  50.0f, 25.0f, 50.0f },
     };
 }
 
@@ -60,7 +64,10 @@ PresetManager::PresetManager (juce::AudioProcessorValueTreeState& s,
                      { ParamID::direction,  static_cast<float> (f.direction) },
                      { ParamID::engine,     static_cast<float> (f.engine) },
                      { ParamID::air,        f.air },
-                     { ParamID::space,      f.space } };
+                     { ParamID::space,      f.space },
+                     { ParamID::orbitSpread,  f.orbitSpread },
+                     { ParamID::orbitFormant, f.orbitFormant },
+                     { ParamID::wander,       f.wander } };
         factory.push_back (std::move (p));
     }
 

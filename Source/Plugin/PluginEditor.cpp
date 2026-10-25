@@ -191,6 +191,14 @@ SingPanel::SingPanel (SingProcessor& p)
     loopLength.setTooltip ("How long the loop is");
     loopFade.setTooltip ("Crossfades the loop's ends into each other. Long fades blur the loop into a steady tone");
 
+    addAndMakeVisible (wanderDragger);
+    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::wander, wanderDragger));
+    wanderDragger.formatValue = [] (double v) { return formatOrbit (static_cast<float> (v)); };
+    wanderDragger.setDoubleClickReturnValue (true, 0.0);
+    wanderDragger.setTooltip ("Movement for the loop: each note's reading point wanders through the loop, so the vowel slowly changes. "
+                              "100% lets it travel the whole loop");
+    wanderDragger.onValueChange = [this] { wanderDragger.repaint(); updateMovementStrip(); };
+
     // Knobs
     const char* ids[numKnobs] = { ParamID::attack, ParamID::release, ParamID::stretch, ParamID::spread, ParamID::formant, ParamID::air, ParamID::space };
     const char* labels[numKnobs] = { "Attack", "Release", "Stretch", "Spread", "Formant", "Air", "Space" };
@@ -214,6 +222,18 @@ SingPanel::SingPanel (SingProcessor& p)
     knobs[formant].setTooltip ("Moves the vowel's character: down is larger and darker, up is smaller and glassier");
     knobs[air].setTooltip ("A gentle lift at the top, with a soft breath that follows the voice");
     knobs[space].setTooltip ("A long reverb: from a small room to a huge wash that rings for 20 s");
+
+    // Orbits: the knobs that can move.
+    for (auto [k, id] : { std::pair { stretch, ParamID::orbitStretch }, std::pair { spread, ParamID::orbitSpread },
+                          std::pair { formant, ParamID::orbitFormant }, std::pair { air, ParamID::orbitAir },
+                          std::pair { space, ParamID::orbitSpace } })
+    {
+        auto& knob = knobs[(size_t) k];
+        knob.setOrbit (*state.getParameter (id));
+        knob.setTooltip (knob.getTooltip() + ". Drag the ring around it to make it wander");
+    }
+    for (auto* id : { ParamID::orbitStretch, ParamID::orbitSpread, ParamID::orbitFormant, ParamID::orbitAir, ParamID::orbitSpace })
+        state.addParameterListener (id, this);
 
     // Bottom row
     addAndMakeVisible (holdButton);
@@ -258,6 +278,48 @@ SingPanel::SingPanel (SingProcessor& p)
     for (auto [d, id] : { std::pair { &voicesDragger, ParamID::voices }, std::pair { &glideDragger, ParamID::glide }, std::pair { &outputDragger, ParamID::output } })
         d->setDoubleClickReturnValue (true, defaultValueOf (state, id));
     addAndMakeVisible (modules);
+
+    // Movement strip.
+    addAndMakeVisible (shapeButton);
+    shapeButton.setTooltip ("How the knobs with a ring move. Drift: wanders at random and never repeats. "
+                            "Wave: smooth and even. Breath: a slow swell and a longer fall. Click for the next shape");
+    shapeAttachment = std::make_unique<juce::ParameterAttachment> (
+        *state.getParameter (ParamID::moveShape),
+        [this] (float value)
+        {
+            const int i = juce::jlimit (0, 2, juce::roundToInt (value));
+            shapeButton.setShape (i, moveShapeNames()[i]);
+        });
+    shapeButton.onClick = [this]
+    {
+        const int next = (juce::roundToInt (processor.getState().getRawParameterValue (ParamID::moveShape)->load()) + 1) % 3;
+        shapeAttachment->setValueAsCompleteGesture (static_cast<float> (next));
+    };
+    for (auto* d : { &speedDragger, &barsDragger })
+        addChildComponent (d);
+    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::moveSpeed, speedDragger));
+    sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, ParamID::moveBars, barsDragger));
+    speedDragger.formatValue = [] (double v) { return formatSeconds (static_cast<float> (v)); };
+    barsDragger.formatValue = [] (double v) { return moveBarNames()[juce::jlimit (0, 7, juce::roundToInt (v))]; };
+    speedDragger.setDoubleClickReturnValue (true, defaultValueOf (state, ParamID::moveSpeed));
+    barsDragger.setDoubleClickReturnValue (true, defaultValueOf (state, ParamID::moveBars));
+    speedDragger.setTooltip ("How long one swing takes");
+    barsDragger.setTooltip ("How long one swing takes, in bars of the song");
+    addAndMakeVisible (syncButton);
+    syncButton.setTooltip ("Follow the song: each swing lasts a number of bars, and lines up with them while the song plays");
+    syncAttachment = std::make_unique<juce::ParameterAttachment> (
+        *state.getParameter (ParamID::moveSync),
+        [this] (float value)
+        {
+            syncButton.setToggleState (value > 0.5f, juce::dontSendNotification);
+            updateMovementStrip();
+        });
+    syncButton.setClickingTogglesState (false);
+    syncButton.onClick = [this] { syncAttachment->setValueAsCompleteGesture (syncButton.getToggleState() ? 0.0f : 1.0f); };
+    addAndMakeVisible (eachNoteButton);
+    buttonAttachments.push_back (std::make_unique<ButtonAttachment> (state, ParamID::moveEach, eachNoteButton));
+    eachNoteButton.setTooltip ("On: every note wanders its own way, so a chord shimmers. Off: every note moves together");
+
     voicesDragger.setTooltip ("How many notes can sound at once");
     glideDragger.setTooltip ("Each new note slides from the last one");
 
@@ -277,6 +339,8 @@ SingPanel::SingPanel (SingProcessor& p)
 
     directionAttachment->sendInitialUpdate();
     engineAttachment->sendInitialUpdate();
+    shapeAttachment->sendInitialUpdate();
+    syncAttachment->sendInitialUpdate();
     bloomMix = bloomEngine ? 1.0f : 0.0f;
     bypassAttachment->sendInitialUpdate();
     updatePresetDisplay();
@@ -284,7 +348,32 @@ SingPanel::SingPanel (SingProcessor& p)
     setSize (kPanelWidth, kPanelHeight);
 }
 
-SingPanel::~SingPanel() = default;
+SingPanel::~SingPanel()
+{
+    for (auto* id : { ParamID::orbitStretch, ParamID::orbitSpread, ParamID::orbitFormant, ParamID::orbitAir, ParamID::orbitSpace })
+        processor.getState().removeParameterListener (id, this);
+}
+
+void SingPanel::parameterChanged (const juce::String&, float)
+{
+    // May come from the audio thread (automation): the strip is checked on the next frame.
+    movementDirty = true;
+}
+
+void SingPanel::updateMovementStrip()
+{
+    const bool sync = syncButton.getToggleState();
+    speedDragger.setVisible (! sync);
+    barsDragger.setVisible (sync);
+
+    // The strip is quieter while nothing is set to move.
+    bool moving = false;
+    for (auto* id : { ParamID::orbitStretch, ParamID::orbitSpread, ParamID::orbitFormant, ParamID::orbitAir, ParamID::orbitSpace, ParamID::wander })
+        moving = moving || processor.getState().getRawParameterValue (id)->load() > 0.0f;
+    const float alpha = (bypassed ? 0.45f : 1.0f) * (moving ? 1.0f : 0.55f);
+    for (auto* c : std::initializer_list<juce::Component*> { &shapeButton, &speedDragger, &barsDragger, &syncButton, &eachNoteButton })
+        c->setAlpha (alpha);
+}
 
 juce::String SingPanel::formatLoopSeconds (double percent) const
 {
@@ -304,7 +393,7 @@ void SingPanel::setBypassed (bool shouldBypass)
 
     // Dim the controls while bypassed; they still work.
     const float alpha = bypassed ? 0.45f : 1.0f;
-    for (auto* c : std::initializer_list<juce::Component*> { voiceInfo.get(), &waveform, &loopStart, &loopLength, &loopFade,
+    for (auto* c : std::initializer_list<juce::Component*> { voiceInfo.get(), &waveform, &loopStart, &loopLength, &loopFade, &wanderDragger,
                                                              &holdButton, &keepVowelButton, &voicesDragger, &glideDragger, &outputDragger,
                                                              &modules })
         c->setAlpha (alpha);
@@ -314,6 +403,7 @@ void SingPanel::setBypassed (bool shouldBypass)
         b->setAlpha (alpha);
     for (auto& k : knobs)
         k.setAlpha (alpha);
+    updateMovementStrip();
     repaint();
 }
 
@@ -541,9 +631,19 @@ void SingPanel::frame (double seconds, bool animate)
     }
     waveform.setLights (lights, animate, seconds);
 
+    // The lights that circle the knobs with an orbit. Motion too, so they hide under Reduce Motion.
+    const auto orbits = processor.getOrbitPositions();
+    knobs[stretch].setOrbitLive (animate ? orbits[moveStretch] : -1.0f);
+    knobs[spread].setOrbitLive (animate ? orbits[moveSpread] : -1.0f);
+    knobs[formant].setOrbitLive (animate ? orbits[moveFormant] : -1.0f);
+    knobs[air].setOrbitLive (animate ? orbits[moveAir] : -1.0f);
+    knobs[space].setOrbitLive (animate ? orbits[moveSpace] : -1.0f);
+    if (movementDirty.exchange (false))
+        updateMovementStrip();
+
     // On the dark Bloom sky the bottom row and the voice's shadow switch to light colours.
     const bool dark = bloomMix > 0.5f;
-    for (auto* d : { &voicesDragger, &glideDragger, &outputDragger })
+    for (auto* d : { &voicesDragger, &glideDragger, &outputDragger, &speedDragger, &barsDragger })
         d->setOnSunset (! dark);
     waveform.setDarkSky (dark);
 
@@ -602,7 +702,7 @@ void SingPanel::resized()
     }
     float rx = right;
     for (auto [d, widest] : { std::pair { &loopFade, juce::String ("100%") }, std::pair { &loopLength, juce::String ("60.00 s") },
-                              std::pair { &loopStart, juce::String ("60.00 s") } })
+                              std::pair { &loopStart, juce::String ("60.00 s") }, std::pair { &wanderDragger, juce::String ("100%") } })
     {
         const float w = d->preferredWidth (widest);
         d->setBounds (juce::Rectangle<float> (rx - w, loopY, w, 36.0f).toNearestInt());
@@ -629,6 +729,19 @@ void SingPanel::resized()
         ex += w + 6.0f;
     }
     keepVowelButton.setBounds (juce::Rectangle<float> (ex + 16.0f, bottomY, keepVowelButton.preferredWidth(), 40.0f).toNearestInt());
+
+    // Movement strip, after Keep vowel: the shape, the speed, Sync and Each note.
+    float mx = static_cast<float> (keepVowelButton.getRight()) + 34.0f;
+    const float my = bottomY + 4.0f;
+    shapeButton.setBounds (juce::Rectangle<float> (mx, my, shapeButton.preferredWidth(), 32.0f).toNearestInt());
+    mx += shapeButton.preferredWidth() + 16.0f;
+    const float speedW = std::max (speedDragger.preferredWidth ("120 s"), barsDragger.preferredWidth ("32 bars"));
+    for (auto* d : { &speedDragger, &barsDragger })
+        d->setBounds (juce::Rectangle<float> (mx, bottomY + 6.0f, speedW, 28.0f).toNearestInt());
+    mx += speedW + 10.0f;
+    syncButton.setBounds (juce::Rectangle<float> (mx, my, syncButton.preferredWidth(), 32.0f).toNearestInt());
+    mx += syncButton.preferredWidth() + 6.0f;
+    eachNoteButton.setBounds (juce::Rectangle<float> (mx, my, eachNoteButton.preferredWidth(), 32.0f).toNearestInt());
     rx = right;
     for (auto [d, widest] : { std::pair { &outputDragger, juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92" "36.0 dB")) }, std::pair { &glideDragger, juce::String ("2.0 s") },
                               std::pair { &voicesDragger, juce::String ("16") } })

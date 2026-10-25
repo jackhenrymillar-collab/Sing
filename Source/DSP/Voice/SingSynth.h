@@ -59,6 +59,14 @@ public:
     // Adds numSamples of all voices to left and right.
     void render (float* left, float* right, int numSamples) noexcept;
 
+    // The movement's clock, in cycles of its period. It runs on by itself; set it to follow
+    // the song (Sync). The effects after the notes read it too.
+    void setMoveClock (double cycles) noexcept { moveCycles = cycles; }
+    double getMoveClock() const noexcept { return moveCycles; }
+
+    // The newest sounding note, or nullptr: the panel shows its orbits.
+    const SingVoice* newestVoice() const noexcept;
+
     int activeVoiceCount() const noexcept;
     bool isUsing (const LoopSource& source) const noexcept;
 
@@ -97,6 +105,7 @@ private:
     float lastNoteSemitones = 0.0f;
     uint64_t nextOrder = 1;
     uint32_t nextSeed = 0x2545F491u;
+    double moveCycles = 0.0;
 };
 
 } // namespace sing

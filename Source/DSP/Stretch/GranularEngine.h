@@ -50,6 +50,10 @@ public:
     double playPosition() const noexcept override;
 
     void setSettings (const Settings& newSettings) noexcept;
+
+    // Moves the read head by this many play buffer samples (either way), for Wander. Grains
+    // already sounding finish where they are, so the move blends over one grain.
+    void nudge (double samples) noexcept;
     const Settings& getSettings() const noexcept { return settings; }
 
     // Play buffer position of the read head, for tests and debugging.

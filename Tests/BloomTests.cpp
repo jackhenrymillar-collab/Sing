@@ -446,6 +446,38 @@ TEST_CASE ("Bloom: a stretched note passes an onset at the recorded speed")
     CHECK (seconds[1] < 2.0);
 }
 
+TEST_CASE ("Bloom: a frozen note stays where it starts, even on an onset")
+{
+    // Stretch at Held (speed 0) with Onsets on, starting right on a transient: the note must
+    // freeze at once, not walk past the onset at the recorded speed first. (A loop with no
+    // Fade has a transient at its seam, where every note starts.)
+    auto src = burstSource();
+    const auto* analysis = static_cast<const BloomAnalysis*> (src->analysis (StretchMode::bloom));
+    REQUIRE (! analysis->onsets().empty());
+    const double onset = analysis->onsets().front().position;
+
+    BloomVoice voice;
+    voice.prepare (sr);
+    BloomVoice::Parameters p;
+    p.speed = 0.0f;
+    p.onsets = 1.0f;
+    p.numLayers = 1;
+    p.layers[0].gainLeft = p.layers[0].gainRight = 0.5f;
+    voice.setParameters (p);
+    voice.start (*src, onset, 7u, 0.0f);
+    const double first = src->toVoicePosition (onset);
+
+    std::vector<float> l (256), r (256);
+    double furthest = 0.0;
+    for (int b = 0; b < 2 * 48000 / 256; ++b)
+    {
+        voice.render (l.data(), r.data(), 256);
+        furthest = std::max (furthest, std::abs (voice.playPosition() - first));
+    }
+    INFO ("moved " << furthest << " samples");
+    CHECK (furthest < 1.0);
+}
+
 namespace
 {
 // The share of a render's power within 8 Hz of the partials n * f0 + offsetHz (n = 1 to 20).

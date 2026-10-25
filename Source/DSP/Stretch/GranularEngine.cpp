@@ -126,6 +126,14 @@ int GranularEngine::activeGrainCount() const noexcept
     return (int) std::count_if (grains.begin(), grains.end(), [] (const Grain& g) { return g.source != nullptr; });
 }
 
+void GranularEngine::nudge (double samples) noexcept
+{
+    if (current == nullptr || samples == 0.0)
+        return;
+    head = wrap (head + samples, (double) current->size());
+    followHead();
+}
+
 double GranularEngine::playPosition() const noexcept
 {
     return current != nullptr ? current->toVoicePosition (head) : 0.0;

@@ -64,6 +64,19 @@ SingProcessor::SingProcessor()
     spaceFilterOn = state.getRawParameterValue (ParamID::spaceFilterOn);
     spaceLow = state.getRawParameterValue (ParamID::spaceLow);
     spaceHigh = state.getRawParameterValue (ParamID::spaceHigh);
+    orbitAmounts[moveStretch] = state.getRawParameterValue (ParamID::orbitStretch);
+    orbitAmounts[moveSpread] = state.getRawParameterValue (ParamID::orbitSpread);
+    orbitAmounts[moveFormant] = state.getRawParameterValue (ParamID::orbitFormant);
+    orbitAmounts[moveAir] = state.getRawParameterValue (ParamID::orbitAir);
+    orbitAmounts[moveSpace] = state.getRawParameterValue (ParamID::orbitSpace);
+    orbitAmounts[moveWander] = state.getRawParameterValue (ParamID::wander);
+    moveShape = state.getRawParameterValue (ParamID::moveShape);
+    moveSpeed = state.getRawParameterValue (ParamID::moveSpeed);
+    moveSync = state.getRawParameterValue (ParamID::moveSync);
+    moveBars = state.getRawParameterValue (ParamID::moveBars);
+    moveEach = state.getRawParameterValue (ParamID::moveEach);
+    for (auto& o : orbitPositions)
+        o = -1.0f;
     bypassParam = state.getParameter (ParamID::bypass);
 
     for (auto* id : kLoopIds)
@@ -293,7 +306,58 @@ SynthSettings SingProcessor::readSettings() const noexcept
     s.voice.pitched = rootPitched.load();
     s.polyphony = juce::roundToInt (voices->load());
     s.voice.mode = juce::roundToInt (engine->load()) == 1 ? StretchMode::bloom : StretchMode::granular;
+    s.voice.movement = readMovement (getSampleRate());
     return s;
+}
+
+MovementSettings SingProcessor::readMovement (double sampleRate) const noexcept
+{
+    MovementSettings m;
+    m.shape = static_cast<MoveShape> (juce::jlimit (0, 2, juce::roundToInt (moveShape->load())));
+    for (int t = 0; t < numMoveTargets; ++t)
+        m.amounts[(size_t) t] = juce::jlimit (0.0f, 1.0f, orbitAmounts[(size_t) t]->load() * 0.01f);
+    m.eachNote = moveEach->load() > 0.5f;
+
+    // The period: free in seconds, or synced to the song's bars at its tempo.
+    double seconds = juce::jmax (0.1f, moveSpeed->load());
+    if (moveSync->load() > 0.5f)
+    {
+        double bpm = 120.0, beatsPerBar = 4.0;
+        if (auto* ph = getPlayHead())
+            if (const auto pos = ph->getPosition())
+            {
+                if (const auto b = pos->getBpm())
+                    bpm = juce::jlimit (20.0, 999.0, *b);
+                if (const auto sig = pos->getTimeSignature())
+                    beatsPerBar = juce::jmax (1.0, 4.0 * sig->numerator / juce::jmax (1, sig->denominator));
+            }
+        seconds = moveBarsAt (juce::roundToInt (moveBars->load())) * beatsPerBar * 60.0 / bpm;
+    }
+    m.cyclesPerSample = sampleRate > 0.0 ? 1.0 / (seconds * sampleRate) : 0.0;
+    return m;
+}
+
+void SingProcessor::followSong (const MovementSettings& m) noexcept
+{
+    // Synced and the song playing: put the movement's clock where the song is, so the same
+    // bar always moves the same way. Stopped, the clock just runs on.
+    if (moveSync->load() <= 0.5f)
+        return;
+    auto* ph = getPlayHead();
+    if (ph == nullptr)
+        return;
+    const auto pos = ph->getPosition();
+    if (! pos || ! pos->getIsPlaying())
+        return;
+    const auto ppq = pos->getPpqPosition();
+    if (! ppq)
+        return;
+    double beatsPerBar = 4.0;
+    if (const auto sig = pos->getTimeSignature())
+        beatsPerBar = juce::jmax (1.0, 4.0 * sig->numerator / juce::jmax (1, sig->denominator));
+    const double beatsPerCycle = moveBarsAt (juce::roundToInt (moveBars->load())) * beatsPerBar;
+    if (m.cyclesPerSample > 0.0 && beatsPerCycle > 0.0)
+        synth.setMoveClock (*ppq / beatsPerCycle);
 }
 
 void SingProcessor::handleMidi (const juce::MidiMessage& m) noexcept
@@ -335,7 +399,10 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     synth.setSource (exchange.acquire());
     synth.releaseUnusedSources ([this] (const LoopSource* s) { exchange.retire (s); });
 
-    synth.setSettings (readSettings());
+    const auto settings = readSettings();
+    synth.setSettings (settings);
+    followSong (settings.voice.movement);
+    const double clockAtStart = synth.getMoveClock();
 
     float* left = buffer.getWritePointer (0);
     float* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer (1) : nullptr;
@@ -393,8 +460,41 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
 
     // Binaural beats, then Air, then Space: the reverb hears the lifted top and the breath.
     binaural.set (binauralOn->load() > 0.5f, binauralRate->load(), binauralAmount->load() * 0.01f);
-    air.setAmount (airAmount->load() * 0.01f);
-    space.setAmount (spaceAmount->load() * 0.01f);
+
+    // Air and Space orbit here, after the notes, so every note shares their path.
+    {
+        const auto& m = settings.voice.movement;
+        const float ease = 1.0f - std::exp (-(float) numSamples / (0.03f * (float) getSampleRate()));
+        const auto moved = [&] (int target, float base)
+        {
+            const float width = m.amounts[(size_t) target];
+            const float wanted = width > 0.0f
+                ? movement::orbit (base, width, movement::value (m.shape, clockAtStart, movement::targetSeed (movement::sharedSeed, target))) - base
+                : 0.0f;
+            auto& offset = fxOffset[(size_t) target];
+            offset += (wanted - offset) * ease;
+            const float now = juce::jlimit (0.0f, 1.0f, base + offset);
+            orbitPositions[(size_t) target] = width > 0.0f ? now : -1.0f;
+            return now;
+        };
+        air.setAmount (moved (moveAir, airAmount->load() * 0.01f));
+        space.setAmount (moved (moveSpace, spaceAmount->load() * 0.01f));
+    }
+
+    // The newest note's orbits, for the panel.
+    {
+        const auto& m = settings.voice.movement;
+        const auto* newest = synth.newestVoice();
+        const auto moved = newest != nullptr ? newest->getMoved() : SingVoice::Moved {};
+        const auto show = [&] (int target, float value)
+        {
+            orbitPositions[(size_t) target] = newest != nullptr && m.amounts[(size_t) target] > 0.0f ? value : -1.0f;
+        };
+        show (moveStretch, moved.stretch);
+        show (moveSpread, moved.spread);
+        show (moveFormant, moved.formant);
+        show (moveWander, moved.wander + 0.5f);
+    }
     space.setFilter (spaceFilterOn->load() > 0.5f, spaceLow->load(), spaceHigh->load());
     if (right != nullptr)
     {
@@ -453,6 +553,14 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         else
             out.note = -1;
     }
+}
+
+std::array<float, numMoveTargets> SingProcessor::getOrbitPositions() const noexcept
+{
+    std::array<float, numMoveTargets> result {};
+    for (size_t i = 0; i < result.size(); ++i)
+        result[i] = orbitPositions[i].load();
+    return result;
 }
 
 std::array<SingProcessor::Light, SingProcessor::maxLights> SingProcessor::getLights() const noexcept
