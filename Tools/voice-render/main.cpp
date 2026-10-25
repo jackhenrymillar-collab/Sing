@@ -7,6 +7,8 @@
 //   --mode M           pitch mode: formant or stft. Default formant
 //   --keep-vowel 0|1   Keep vowel. Default 1
 //   --formant S        Formant knob, semitones. Default 0
+//   --engine E         grain or bloom. Default grain
+//   --window S         Bloom's window, seconds. Default 0.68
 //   --stretch K        Stretch knob, 0 to 1. Default 0
 //   --spread K         Spread knob, 0 to 1. Default 0
 //   --seconds T        how long the notes are held. Default 8
@@ -29,7 +31,8 @@ int main (int argc, char** argv)
     if (argc < 3)
     {
         std::fprintf (stderr, "usage: sing-voice-render in.wav out.wav [--note N]... [--root N] [--mode formant|stft]\n"
-                              "       [--keep-vowel 0|1] [--formant S] [--stretch K] [--spread K] [--seconds T] [--tail T]\n");
+                              "       [--keep-vowel 0|1] [--formant S] [--engine grain|bloom] [--window S]\n"
+                              "       [--stretch K] [--spread K] [--seconds T] [--tail T]\n");
         return 1;
     }
     Audio in;
@@ -40,7 +43,8 @@ int main (int argc, char** argv)
     }
 
     std::vector<int> notes;
-    float rootNote = -1.0f, seconds = 8.0f, tail = 2.0f;
+    float rootNote = -1.0f, seconds = 8.0f, tail = 2.0f, window = 0.68f;
+    bool bloom = false;
     SynthSettings settings;
     auto& v = settings.voice;
     v.stretch = 0.0f;
@@ -56,6 +60,8 @@ int main (int argc, char** argv)
         else if (k == "--mode") v.pitchMode = std::string (val) == "stft" ? PitchMode::stft : PitchMode::formant;
         else if (k == "--keep-vowel") v.keepVowel = std::stoi (val) != 0;
         else if (k == "--formant") v.formantSemitones = std::stof (val);
+        else if (k == "--engine") bloom = std::string (val) == "bloom";
+        else if (k == "--window") window = std::stof (val);
         else if (k == "--stretch") v.stretch = std::stof (val);
         else if (k == "--spread") v.spread = std::stof (val);
         else if (k == "--seconds") seconds = std::stof (val);
@@ -80,6 +86,10 @@ int main (int argc, char** argv)
     loop.length = n;
     loop.fade = (int) (0.25 * in.sampleRate);
     loop.pitchPeriod = v.pitched ? (float) (in.sampleRate / v.rootHz) : 0.0f;
+    loop.analyseForBloom = bloom;
+    loop.bloomWindowSeconds = window;
+    loop.hostSampleRate = in.sampleRate;
+    v.mode = bloom ? StretchMode::bloom : StretchMode::granular;
     loop.pitchTrack = std::make_shared<PitchTrack> (trackPitch (mono.data(), n, in.sampleRate));
     std::vector<const float*> chans;
     for (const auto& ch : in.channels)

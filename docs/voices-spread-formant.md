@@ -134,13 +134,14 @@ all. In Bloom, Keep vowel off moves the envelope with the key too.
 
 ### KEYS: Formant or STFT
 
-**KEYS** (parameter `pitchmode`, in the loop row) picks how a Grain note is moved to its key.
-Bloom ignores it, since Bloom shifts pitch in its own spectrum, and the pills dim there.
+**KEYS** (parameter `pitchmode`, in the loop row) picks how a note is moved to its key.
 
-- **Formant** (the default, and how Sing always worked): the grains play the voice faster or
-  slower, and the formant shifter above puts the vowel back.
-- **STFT**: the grains play the voice at its recorded pitch and speed (only Spread's detune is
-  applied to them), and `StftPitchShifter` moves the mix to the key in the spectrum. It adapts
+- **Formant** (the default, and how Sing always worked): in Grain the grains play the voice
+  faster or slower and the formant shifter above puts the vowel back; Bloom reads its
+  spectrum at the key and moves the envelope itself.
+- **STFT**: Grain or Bloom plays the voice at its root (only Spread's detune is applied), and
+  `StftPitchShifter` moves the note's mix to the key in the spectrum. Bloom's Harmonics then
+  follows the root's harmonics, which the shift carries to the key's. It adapts
   stftPitchShift by Jürgen Hock (MIT, see THIRD_PARTY_NOTICES.md). A phase vocoder finds each
   bin's exact frequency, the bins are read at bin / factor with their frequencies multiplied by
   factor, and the phases run on at the new frequencies. With Keep vowel on, the spectral

@@ -198,6 +198,7 @@ void SingVoice::start (const LoopSource& src, int midiNote, float velocity, cons
     envelope.start (settings.attackSeconds);
     updateMovement (0, true);
 
+    stftNote = settings.pitchMode == PitchMode::stft;
     bloomNote = settings.mode == StretchMode::bloom && BloomVoice::canPlay (src);
     if (bloomNote)
     {
@@ -210,10 +211,11 @@ void SingVoice::start (const LoopSource& src, int midiNote, float velocity, cons
     if (bloomNote)
     {
         applyWander (true);
+        if (stftNote)
+            primeBloomShifter();
         return;
     }
 
-    stftNote = settings.pitchMode == PitchMode::stft;
     for (int i = 0; i < maxCopies; ++i)
         if (copyShape (i, voiceSettings.spread).weight > 0.0f)
             startCopy (i);
@@ -366,6 +368,31 @@ void SingVoice::primeShifter() noexcept
     }
 }
 
+float SingVoice::rootPeriod() const noexcept
+{
+    // Bloom notes in STFT mode play at the root: the voice's own period, in host samples.
+    if (source == nullptr || source->settings().pitchPeriod < 2.0f)
+        return 0.0f;
+    return (float) (source->settings().pitchPeriod * hostRate / source->sampleRate());
+}
+
+void SingVoice::primeBloomShifter() noexcept
+{
+    // As primeShifter: Bloom renders the note's first latency() samples up front, so the
+    // shifted note starts when the note does.
+    const auto shift = stftShift();
+    int prime = stft.start (rootPeriod(), shift.factor, shift.envelope, shift.envelopeRatio);
+    while (prime > 0)
+    {
+        const int n = std::min (prime, subBlock);
+        std::fill_n (mixLeft.data(), n, 0.0f);
+        std::fill_n (mixRight.data(), n, 0.0f);
+        bloom.render (mixLeft.data(), mixRight.data(), n);
+        stft.process (mixLeft.data(), mixRight.data(), mixLeft.data(), mixRight.data(), n);
+        prime -= n;
+    }
+}
+
 void SingVoice::release() noexcept
 {
     if (! active || released)
@@ -511,6 +538,12 @@ void SingVoice::renderSubBlock (float* left, float* right, int n) noexcept
     {
         bloom.setParameters (bloomParameters (shapes, norm));
         bloom.render (mixLeft.data(), mixRight.data(), n);
+        if (stftNote)
+        {
+            const auto shift = stftShift();
+            stft.setShift (shift.factor, shift.envelope, shift.envelopeRatio);
+            stft.process (mixLeft.data(), mixRight.data(), mixLeft.data(), mixRight.data(), n);
+        }
         applyEnvelope (left, right, n);
         return;
     }
@@ -614,6 +647,10 @@ BloomVoice::Parameters SingVoice::bloomParameters (const std::array<CopyShape, (
     // compensation to keep the recorded vowel on every key.
     // With Keep vowel off, the envelope moves with the key, as plain resampling would.
     p.formantRatio = std::exp2 ((voiceSettings.formantSemitones + (voiceSettings.keepVowel ? 0.0f : semitones)) / 12.0f);
+    // In STFT mode Bloom plays at the root (Spread's detune aside) and the STFT shifter moves
+    // it to the key and sets the vowel, as it does for Grain.
+    if (stftNote)
+        p.formantRatio = 1.0f;
     // Some width even at Spread 0, but little enough that the note holds up in mono.
     p.width = 0.3f + 0.7f * voiceSettings.spread;
     p.shiftHz = voiceSettings.shiftHz;
@@ -638,7 +675,7 @@ BloomVoice::Parameters SingVoice::bloomParameters (const std::array<CopyShape, (
             continue;
         const float theta = (shape.pan + 1.0f) * 0.5f * halfPi;
         auto& layer = p.layers[(size_t) p.numLayers++];
-        layer.pitchRatio = pitchRatio (i);
+        layer.pitchRatio = grainRatio (i);
         layer.gainLeft = shape.weight * norm * std::cos (theta) * 1.41421356f;
         layer.gainRight = shape.weight * norm * std::sin (theta) * 1.41421356f;
         layer.offsetSeconds = (double) i * copyOffsetSeconds;

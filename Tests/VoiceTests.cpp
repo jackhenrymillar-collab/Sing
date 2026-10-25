@@ -856,3 +856,43 @@ TEST_CASE ("Synth: STFT pitch mode plays the key at the voice's own speed")
     INFO ("level a fifth up " << level << " dB");
     CHECK (std::abs (level) < 3.0);
 }
+
+TEST_CASE ("Synth: STFT pitch mode works in Bloom too")
+{
+    const auto v = makePlaceholderVoice (PlaceholderVowel::ah, sr, 4.0f);
+    LoopSettings ls;
+    ls.start = (int) (1.0 * sr);
+    ls.length = (int) (2.0 * sr);
+    ls.fade = (int) (0.3 * sr);
+    ls.pitchPeriod = (float) (sr / v.rootHz);
+    ls.analyseForBloom = true;
+    ls.hostSampleRate = sr;
+    const float* ch[] = { v.samples.data() };
+    const auto src = LoopSource::build (ch, 1, (int) v.samples.size(), sr, ls);
+
+    auto play = [&] (int note, PitchMode mode)
+    {
+        SingSynth synth;
+        synth.prepare (sr, 256);
+        synth.setSource (src.get());
+        auto s = plainSynth (v.rootHz);
+        s.voice.mode = StretchMode::bloom;
+        s.voice.stretch = 0.6f;
+        s.voice.pitchMode = mode;
+        synth.setSettings (s);
+        synth.noteOn (note, 1.0f);
+        return mono (renderSynth (synth, 96000));
+    };
+
+    const int root = (int) std::lround (hzToMidi (v.rootHz));
+    const auto up = play (root + 7, PitchMode::stft);
+    for (float x : up)
+        REQUIRE (std::isfinite (x));
+    CHECK_THAT (detectPitch (up.data() + 48000, 48000, sr).hz, WithinAbs (v.rootHz * std::exp2 (((double) root + 7.0 - hzToMidi (v.rootHz)) / 12.0), 4.0));
+
+    // About as loud as Bloom shifting by itself.
+    const auto own = play (root + 7, PitchMode::formant);
+    const double level = db (rms (up.data() + 48000, 48000) / rms (own.data() + 48000, 48000));
+    INFO ("STFT against Bloom's own shift, a fifth up: " << level << " dB");
+    CHECK (std::abs (level) < 3.0);
+}

@@ -192,8 +192,8 @@ SingPanel::SingPanel (SingProcessor& p)
         b->onClick = [this, i] { pitchModeAttachment->setValueAsCompleteGesture (static_cast<float> (i)); };
         addAndMakeVisible (*b);
     }
-    pitchModeButtons[0]->setTooltip ("Formant: keys play the voice faster or slower, and the formant shifter keeps the vowel. Clean and natural");
-    pitchModeButtons[1]->setTooltip ("STFT: keys move every partial in the spectrum, the voice keeps its own speed. A smoother, more synthetic shift. Grain only: Bloom shifts in its own spectrum");
+    pitchModeButtons[0]->setTooltip ("Formant: in Grain, keys play the voice faster or slower and the formant shifter keeps the vowel; Bloom shifts in its own spectrum");
+    pitchModeButtons[1]->setTooltip ("STFT: Grain or Bloom plays at the root and every partial is moved to the key in the spectrum, at the voice's own speed");
     pitchModeAttachment = std::make_unique<juce::ParameterAttachment> (
         *state.getParameter (ParamID::pitchMode), [this] (float) { updatePitchModeButtons(); });
 
@@ -286,7 +286,6 @@ SingPanel::SingPanel (SingProcessor& p)
             for (int i = 0; i < 2; ++i)
                 engineButtons[(size_t) i]->setToggleState (i == (bloomEngine ? 1 : 0), juce::dontSendNotification);
             modules.setBloomEngine (bloomEngine);
-            updatePitchModeButtons();
             repaint();
         });
     for (auto* d : { &voicesDragger, &glideDragger, &outputDragger })
@@ -431,9 +430,8 @@ void SingPanel::setBypassed (bool shouldBypass)
 
 void SingPanel::updatePitchModeButtons()
 {
-    // Bloom shifts pitch in its own spectrum, so the choice only applies to Grain: dim it.
     const int mode = juce::roundToInt (processor.getState().getRawParameterValue (ParamID::pitchMode)->load());
-    const float alpha = (bypassed ? 0.45f : 1.0f) * (bloomEngine ? 0.45f : 1.0f);
+    const float alpha = bypassed ? 0.45f : 1.0f;
     for (int i = 0; i < 2; ++i)
     {
         pitchModeButtons[(size_t) i]->setToggleState (i == mode, juce::dontSendNotification);
@@ -818,9 +816,9 @@ void SingPanel::paint (juce::Graphics& g)
     drawTrackedText (g, "LOOP", { 40.0f, 240.0f, 80.0f, 36.0f }, Fonts::sans (12.0f, false, 0.24f),
                      juce::Justification::centredLeft, Colours::soft.withMultipliedAlpha (bypassed ? 0.45f : 1.0f));
 
-    // KEYS caption, dimmed with its pills in Bloom.
+    // KEYS caption.
     drawTrackedText (g, "KEYS", { keysCaptionX, 240.0f, 60.0f, 36.0f }, Fonts::sans (12.0f, false, 0.24f),
-                     juce::Justification::centredLeft, Colours::soft.withMultipliedAlpha ((bypassed ? 0.45f : 1.0f) * (bloomEngine ? 0.45f : 1.0f)));
+                     juce::Justification::centredLeft, Colours::soft.withMultipliedAlpha (bypassed ? 0.45f : 1.0f));
 
     // Hold's glow, like a CSS box-shadow under the lit pill, and the lit engine's.
     if (holdButton.getToggleState())

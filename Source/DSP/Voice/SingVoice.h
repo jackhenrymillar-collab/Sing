@@ -13,11 +13,11 @@
 namespace sing
 {
 
-// How a granular note moves to its key.
+// How a note moves to its key.
 enum class PitchMode
 {
-    formant,   // resample the voice (grains read faster or slower), then FormantShifter
-    stft,      // grains at the recorded pitch, then StftPitchShifter on the mix
+    formant,   // Grain: resample, then FormantShifter. Bloom: its own spectral shift
+    stft,      // Grain or Bloom at the recorded pitch, then StftPitchShifter on the mix
 };
 
 // Settings shared by every note, read from the plugin's parameters once per block.
@@ -31,8 +31,8 @@ struct VoiceSettings
     // On: the vowel stays as recorded on every key (formant-preserving pitch shift). Off:
     // plain pitch shifting, so the vowel moves with the key (higher keys sound smaller).
     bool keepVowel = true;
-    // Which pitch shifter granular notes use (Bloom shifts in its own spectrum). A note
-    // keeps its mode until it ends.
+    // Which pitch shifter notes use. In STFT mode Grain and Bloom both play at the root and
+    // the STFT shifter moves them to the key. A note keeps its mode until it ends.
     PitchMode pitchMode = PitchMode::formant;
     bool hold = false;
     float glideSeconds = 0.0f;
@@ -169,6 +169,8 @@ private:
     StftPitchShifter stft;
     bool stftNote = false;
     void primeShifter() noexcept;
+    void primeBloomShifter() noexcept;
+    float rootPeriod() const noexcept;
     struct StftShift { float factor = 1.0f; bool envelope = false; float envelopeRatio = 1.0f; };
     StftShift stftShift() const noexcept;
 
