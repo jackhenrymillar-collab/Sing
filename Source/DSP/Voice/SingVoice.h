@@ -183,6 +183,12 @@ private:
     BloomVoice::Parameters bloomParameters (const std::array<CopyShape, (size_t) maxCopies>& shapes, float norm) const noexcept;
     void startCopy (int index) noexcept;
     float targetSemitones() const noexcept;
+    // A Bloom note's frames are built at this pitch: the key, without glide or bend. Each
+    // frame is long, so a pitch that moves inside the frames would move in steps; the rest
+    // of the pitch (glide, bend) is a smooth change of playback speed on Bloom's output.
+    float bloomAnchorSemitones() const noexcept;
+    float bloomVarispeed() const noexcept;
+    void renderBloomVarispeed (int numSamples) noexcept;
     float pitchRatio (int copy) const noexcept;
     // The rate a copy's grains play at: the whole pitch in Formant mode, only the copy's
     // Spread detune in STFT mode (the shifter does the rest).
@@ -200,6 +206,12 @@ private:
     BloomVoice bloom;
     bool bloomNote = false;
     std::vector<float> envelopeGains, mixLeft, mixRight;
+    // Bloom's output waiting to be read at the varispeed rate, and where the reading is.
+    static constexpr float maxVarispeed = 8.0f;
+    std::vector<float> varispeedLeft, varispeedRight;
+    int varispeedFill = 0;
+    double varispeedRead = 1.0;
+    float varispeedRate = 1.0f;
     Envelope envelope;
     VoiceSettings baseSettings;    // as the knobs are set
     VoiceSettings voiceSettings;   // as this sub-block plays them, moved by the orbits

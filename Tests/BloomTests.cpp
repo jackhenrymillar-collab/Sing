@@ -986,3 +986,34 @@ TEST_CASE ("Bloom: a 12 s window plays on a long loop, at about the loop's level
     CHECK (std::abs (lv) < 4.0);
     CHECK (allFinite (render (synth, 48000)));
 }
+
+TEST_CASE ("Bloom: Glide slides smoothly, not in steps a frame long")
+{
+    // Bloom's frames are long (a third of a second at the default window), so a pitch baked
+    // into each frame would hold, then jump. Glide and bend are a smooth varispeed instead.
+    auto src = bloomSource (PlaceholderVowel::ooh);
+    SingSynth synth;
+    synth.prepare (sr, 256);
+    synth.setSource (src.get());
+    auto s = bloomSynth (0.5f);
+    s.voice.glideSeconds = 1.0f;
+    s.voice.releaseSeconds = 0.01f;
+    synth.setSettings (s);
+    synth.noteOn (57, 1.0f);
+    render (synth, 48000);
+    synth.noteOff (57);
+    synth.noteOn (64, 1.0f);
+    const auto m = mono (render (synth, 48000));
+
+    // Every 50 ms from 0.3 s to 0.9 s into the glide, the pitch is on the straight line.
+    double worst = 0.0;
+    for (int at = 14400; at <= 43200; at += 2400)
+    {
+        const auto found = detectPitch (m.data() + at - 1920, 3840, sr);
+        REQUIRE (found.pitched());
+        const double expected = 7.0 * (double) at / 48000.0;
+        worst = std::max (worst, std::abs (12.0 * std::log2 (found.hz / 220.0) - expected));
+    }
+    std::printf ("  Bloom glide: furthest from the line %.2f semitones\n", worst);
+    CHECK (worst < 0.5);
+}

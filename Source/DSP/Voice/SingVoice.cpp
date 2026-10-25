@@ -108,6 +108,9 @@ void SingVoice::prepare (double sampleRate, int maxBlockSize)
     envelopeGains.assign ((size_t) subBlock, 0.0f);
     mixLeft.assign ((size_t) subBlock, 0.0f);
     mixRight.assign ((size_t) subBlock, 0.0f);
+    const auto varispeedSize = (size_t) (std::ceil ((float) subBlock * maxVarispeed) + 8.0f);
+    varispeedLeft.assign (varispeedSize, 0.0f);
+    varispeedRight.assign (varispeedSize, 0.0f);
     (void) maxBlockSize;
     stop();
 }
@@ -115,6 +118,16 @@ void SingVoice::prepare (double sampleRate, int maxBlockSize)
 float SingVoice::targetSemitones() const noexcept
 {
     return (float) note - hzToMidi (voiceSettings.rootHz) + voiceSettings.pitchBendSemitones;
+}
+
+float SingVoice::bloomAnchorSemitones() const noexcept
+{
+    return (float) note - hzToMidi (voiceSettings.rootHz);
+}
+
+float SingVoice::bloomVarispeed() const noexcept
+{
+    return std::clamp (std::exp2 ((semitones - bloomAnchorSemitones()) / 12.0f), 1.0f / maxVarispeed, maxVarispeed);
 }
 
 float SingVoice::pitchRatio (int copy) const noexcept
@@ -200,6 +213,13 @@ void SingVoice::start (const LoopSource& src, int midiNote, float velocity, cons
 
     stftNote = settings.pitchMode == PitchMode::stft;
     bloomNote = settings.mode == StretchMode::bloom && BloomVoice::canPlay (src);
+    // One silent sample before the first, for the interpolation to read.
+    std::fill (varispeedLeft.begin(), varispeedLeft.end(), 0.0f);
+    std::fill (varispeedRight.begin(), varispeedRight.end(), 0.0f);
+    varispeedFill = 1;
+    varispeedRead = 1.0;
+    varispeedRate = std::exp2 ((semitones - bloomAnchorSemitones()) / 12.0f);
+    varispeedRate = std::clamp (varispeedRate, 1.0f / maxVarispeed, maxVarispeed);
     if (bloomNote)
     {
         std::array<CopyShape, (size_t) maxCopies> shapes {};
@@ -537,7 +557,10 @@ void SingVoice::renderSubBlock (float* left, float* right, int n) noexcept
     if (bloomNote)
     {
         bloom.setParameters (bloomParameters (shapes, norm));
-        bloom.render (mixLeft.data(), mixRight.data(), n);
+        if (stftNote)
+            bloom.render (mixLeft.data(), mixRight.data(), n);
+        else
+            renderBloomVarispeed (n);
         if (stftNote)
         {
             const auto shift = stftShift();
@@ -612,6 +635,51 @@ void SingVoice::renderSubBlock (float* left, float* right, int n) noexcept
     applyEnvelope (left, right, n);
 }
 
+void SingVoice::renderBloomVarispeed (int n) noexcept
+{
+    // The speed moves smoothly across the sub-block, from where the last one ended.
+    const float from = varispeedRate, to = bloomVarispeed();
+    varispeedRate = to;
+    const double last = varispeedRead + 0.5 * (double) (from + to) * (double) n;
+    // The interpolation reads up to two samples past the point.
+    const int need = std::min ((int) varispeedLeft.size(), (int) last + 3);
+    if (need > varispeedFill)
+    {
+        const int len = need - varispeedFill;
+        std::fill_n (varispeedLeft.data() + varispeedFill, len, 0.0f);
+        std::fill_n (varispeedRight.data() + varispeedFill, len, 0.0f);
+        bloom.render (varispeedLeft.data() + varispeedFill, varispeedRight.data() + varispeedFill, len);
+        varispeedFill = need;
+    }
+
+    // Four-point Hermite, as the grains read.
+    auto read = [] (const float* x, int i, float f)
+    {
+        const float c0 = x[i];
+        const float c1 = 0.5f * (x[i + 1] - x[i - 1]);
+        const float c2 = x[i - 1] - 2.5f * x[i] + 2.0f * x[i + 1] - 0.5f * x[i + 2];
+        const float c3 = 0.5f * (x[i + 2] - x[i - 1]) + 1.5f * (x[i] - x[i + 1]);
+        return ((c3 * f + c2) * f + c1) * f + c0;
+    };
+    double pos = varispeedRead;
+    const float dr = (to - from) / (float) n;
+    for (int s = 0; s < n; ++s)
+    {
+        const int i = std::clamp ((int) pos, 1, varispeedFill - 3);
+        const float f = (float) std::clamp (pos - (double) i, 0.0, 1.0);
+        mixLeft[(size_t) s] = read (varispeedLeft.data(), i, f);
+        mixRight[(size_t) s] = read (varispeedRight.data(), i, f);
+        pos += (double) (from + dr * ((float) s + 0.5f));
+    }
+
+    // Keep from one sample before the reading point on.
+    const int keepFrom = std::clamp ((int) pos - 1, 0, varispeedFill);
+    std::copy (varispeedLeft.begin() + keepFrom, varispeedLeft.begin() + varispeedFill, varispeedLeft.begin());
+    std::copy (varispeedRight.begin() + keepFrom, varispeedRight.begin() + varispeedFill, varispeedRight.begin());
+    varispeedFill -= keepFrom;
+    varispeedRead = pos - (double) keepFrom;
+}
+
 void SingVoice::applyEnvelope (float* left, float* right, int n) noexcept
 {
     envelope.render (envelopeGains.data(), n);
@@ -646,7 +714,9 @@ BloomVoice::Parameters SingVoice::bloomParameters (const std::array<CopyShape, (
     // Bloom moves the envelope separately from the pitch, so Formant 0 needs no
     // compensation to keep the recorded vowel on every key.
     // With Keep vowel off, the envelope moves with the key, as plain resampling would.
-    p.formantRatio = std::exp2 ((voiceSettings.formantSemitones + (voiceSettings.keepVowel ? 0.0f : semitones)) / 12.0f);
+    // The varispeed after Bloom (glide, bend) moves the envelope too, so take that back out.
+    p.formantRatio = std::exp2 ((voiceSettings.formantSemitones + (voiceSettings.keepVowel ? 0.0f : semitones)) / 12.0f)
+                   / bloomVarispeed();
     // In STFT mode Bloom plays at the root (Spread's detune aside) and the STFT shifter moves
     // it to the key and sets the vowel, as it does for Grain.
     if (stftNote)
@@ -675,7 +745,7 @@ BloomVoice::Parameters SingVoice::bloomParameters (const std::array<CopyShape, (
             continue;
         const float theta = (shape.pan + 1.0f) * 0.5f * halfPi;
         auto& layer = p.layers[(size_t) p.numLayers++];
-        layer.pitchRatio = grainRatio (i);
+        layer.pitchRatio = stftNote ? grainRatio (i) : std::exp2 ((bloomAnchorSemitones() + shape.cents * 0.01f) / 12.0f);
         layer.gainLeft = shape.weight * norm * std::cos (theta) * 1.41421356f;
         layer.gainRight = shape.weight * norm * std::sin (theta) * 1.41421356f;
         layer.offsetSeconds = (double) i * copyOffsetSeconds;
