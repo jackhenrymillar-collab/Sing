@@ -105,6 +105,53 @@ TEST_CASE ("Pitch detection finds the root of pitched voices")
     CHECK_THAT (midiToHz (60.0f), WithinAbs (261.63, 0.01));
 }
 
+TEST_CASE ("The moving placeholder voices are pitched where they say, and change as they go")
+{
+    for (const auto vowel : allPlaceholderVowels)
+    {
+        const float seconds = placeholderSeconds (vowel);
+        const auto v = makePlaceholderVoice (vowel, sr, seconds);
+        REQUIRE (v.samples.size() == (size_t) (seconds * sr));
+
+        float peak = 0.0f;
+        for (float x : v.samples)
+        {
+            REQUIRE (std::isfinite (x));
+            peak = std::max (peak, std::abs (x));
+        }
+        CHECK (peak > 0.2f);
+        CHECK (peak <= 0.5001f);
+
+        if (v.rootHz > 0.0f)
+        {
+            // Within a quarter tone of the note it is written on.
+            const auto found = detectPitch (v.samples.data(), (int) v.samples.size(), sr);
+            REQUIRE (found.pitched());
+            CHECK (std::abs (12.0f * std::log2 (found.hz / v.rootHz)) < 0.5f);
+        }
+    }
+
+    // The swell really swells: the middle is much louder than the start.
+    const auto alto = makePlaceholderVoice (PlaceholderVowel::swellingAlto, sr, 8.0f);
+    auto rms = [&] (const std::vector<float>& x, double from, double to)
+    {
+        double sum = 0.0;
+        const int a = (int) (from * sr), b = (int) (to * sr);
+        for (int i = a; i < b; ++i)
+            sum += (double) x[(size_t) i] * x[(size_t) i];
+        return std::sqrt (sum / (b - a));
+    };
+    CHECK (rms (alto.samples, 4.5, 5.5) > 2.0 * rms (alto.samples, 0.5, 1.5));
+
+    // The sigh ends lower than it starts.
+    const auto sigh = makePlaceholderVoice (PlaceholderVowel::fallingSigh, sr, 8.0f);
+    const auto early = detectPitch (sigh.samples.data() + (int) (1.0 * sr), (int) (2.0 * sr), sr);
+    const auto late = detectPitch (sigh.samples.data() + (int) (6.6 * sr), (int) (0.6 * sr), sr);
+    REQUIRE (early.pitched());
+    REQUIRE (late.pitched());
+    CHECK (12.0f * std::log2 (early.hz / late.hz) > 1.2f);
+}
+
 TEST_CASE ("Pitch detection calls breaths and noise unpitched")
 {
     const auto breath = makePlaceholderVoice (PlaceholderVowel::breath, sr, 3.0f);
@@ -507,7 +554,7 @@ TEST_CASE ("Placeholder voices are clean")
             finite &= std::isfinite (s);
         }
         CHECK (finite);
-        CHECK (peak > 0.3f);
+        CHECK (peak > 0.2f);
         CHECK (peak <= 0.5001f);
     }
 }

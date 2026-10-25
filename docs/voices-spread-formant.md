@@ -29,9 +29,34 @@ state), so a project or a shared `.singpreset` always has its sound.
 
 ### Placeholder voices
 
-The four factory voices are stand-ins made by formant synthesis (vowel formants from
+The first four factory voices are stand-ins made by formant synthesis (vowel formants from
 Peterson and Barney, 1952) until the recorded voices exist: Hollow Ooh (220 Hz), Soft Ah (196 Hz),
-Low Hum (262 Hz) and Two Breaths (unpitched). Note names follow Logic and Ableton, where
+Low Hum (262 Hz) and Two Breaths (unpitched). The three sung ones are pure harmonic tone with no
+breath noise; their harmonics above the top formant are lifted (Brilliance, below) for shine.
+
+Ten more change across the recording (note names as above, middle C is C3), so where the loop sits and how fast Stretch reads it
+change the sound. Each is a short score in `PlaceholderVoices.cpp` (vowel, pitch, vibrato,
+brightness and loudness at each moment of an 8 s take), sung by additive synthesis through
+gliding formants. They have no breath noise at all: harmonics run up to 16 kHz, and
+Brilliance lifts those above the top formant (up to +30 dB) so the voices shine without hiss.
+Their presets leave Air off, since Air adds a breath layer:
+
+| Voice | Root | What moves |
+|---|---|---|
+| Opening Ooh | A2 220 Hz | "ooh" opens through "oh" to "ah" and closes, louder when open |
+| Rising Ee | B2 247 Hz | "ah" to "eh" to "ee", brighter, vibrato quickening |
+| Swelling Alto | G2 196 Hz | straight "oh" swells and eases back; vibrato grows from nothing |
+| Waking Ah | A2 220 Hz | starts almost pure; the harmonics open out until it is full and bright |
+| Small Choir | G2 196 Hz | six singers 9 cents apart, each with its own vibrato; "ah" rounds to "oh" |
+| Low Om | A1 110 Hz | low "oh" closes through "ooh" to "mm" |
+| High Ee | C4 523 Hz | light soprano "ee" easing to "ih" and back |
+| Slow Wah | E2 165 Hz | "ooh" and "ah" in turn every 2 s |
+| Overtone Drone | C2 131 Hz | a narrow resonance sweeps the harmonic series (throat singing) |
+| Falling Sigh | A#2 233 Hz | "ah" sighs down a whole tone, softening and darkening |
+
+Their presets use gentler Stretch (15 to 40 on Grain) than the first ones, because Stretch
+slows reading exponentially (about 1/100 speed at 80) and the movement would otherwise freeze.
+New voices are levelled by loudness (about -16 dB RMS) rather than peak. Note names follow Logic and Ableton, where
 middle C is C3. They store only their id in presets, so swapping
 in the recordings later is one change in `PlaceholderVoices.cpp` and `VoiceData`.
 

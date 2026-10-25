@@ -22,8 +22,8 @@ namespace
         float orbitSpread = 0.0f, orbitFormant = 0.0f, wander = 0.0f;
     };
 
-    // The four presets from the mockup, two for Bloom and one that moves. Their voices are generated
-    // stand-ins until the recorded factory voices exist.
+    // The four presets from the mockup, two for Bloom, one that moves, and ten on voices that change
+    // across the recording. Their voices are generated stand-ins until the recorded ones exist.
     constexpr FactoryPreset kFactory[] = {
         //  name            voice                      attack release stretch spread formant  start length fade  dir engine air    space (old one knob)
         { "Hollow Choir", PlaceholderVowel::ooh,     2.4f,  7.5f,  68.0f, 35.0f, -2.0f,   30.0f, 40.0f, 28.0f, 0,  0,     20.0f, 35.0f },
@@ -34,6 +34,20 @@ namespace
         { "Slow Petals",  PlaceholderVowel::ah,      4.5f, 14.0f,  96.0f, 70.0f, -3.0f,   22.0f, 36.0f, 35.0f, 0,  1,     20.0f, 85.0f },
         // Movement: Spread and Formant drift on every note, and the loop wanders.
         { "Drifting Choir", PlaceholderVowel::ah,    3.0f, 10.0f,  80.0f, 45.0f, -2.0f,   20.0f, 55.0f, 30.0f, 0,  0,     25.0f, 60.0f,  50.0f, 25.0f, 50.0f },
+        // Voices that move: long loops, mostly back and forth, and gentler Stretch than the first
+        // presets, so the glide, swell or sweep unfolds over tens of seconds instead of freezing. Air
+        // is off: its breath layer would put back the noise these voices leave out.
+        //  name             voice                          attack release stretch spread formant  start length fade  dir engine air    space  orbit spread/formant, wander
+        { "Opening Petal",  PlaceholderVowel::openingOoh,    2.5f,  9.0f,  30.0f, 40.0f,  0.0f,    8.0f, 84.0f, 30.0f, 2,  0,      0.0f, 45.0f },
+        { "Brightening",    PlaceholderVowel::risingEe,      3.5f, 11.0f,  35.0f, 50.0f, -2.0f,   10.0f, 80.0f, 30.0f, 2,  1,      0.0f, 65.0f },
+        { "Messa di Voce",  PlaceholderVowel::swellingAlto,  2.0f,  8.0f,  25.0f, 30.0f,  0.0f,    5.0f, 85.0f, 25.0f, 2,  0,      0.0f, 40.0f },
+        { "Found Voice",    PlaceholderVowel::wakingAh,      3.0f, 10.0f,  30.0f, 45.0f,  0.0f,    3.0f, 85.0f, 35.0f, 2,  0,      0.0f, 60.0f },
+        { "Chapel Six",     PlaceholderVowel::smallChoir,    3.0f, 12.0f,  70.0f, 55.0f, -1.0f,   15.0f, 70.0f, 30.0f, 0,  1,      0.0f, 75.0f,   0.0f,  0.0f, 25.0f },
+        { "Om Field",       PlaceholderVowel::lowOm,         2.5f, 10.0f,  35.0f, 35.0f,  1.0f,   10.0f, 80.0f, 30.0f, 2,  0,      0.0f, 55.0f,   0.0f,  0.0f, 30.0f },
+        { "Glass Soprano",  PlaceholderVowel::highEe,        4.0f, 12.0f,  75.0f, 60.0f,  0.0f,   20.0f, 60.0f, 35.0f, 0,  1,      0.0f, 80.0f,  30.0f,  0.0f,  0.0f },
+        { "Tidal Wah",      PlaceholderVowel::slowWah,       1.5f,  8.0f,  15.0f, 30.0f,  0.0f,   12.5f, 75.0f, 20.0f, 0,  0,      0.0f, 45.0f },
+        { "Throat Song",    PlaceholderVowel::overtoneDrone, 2.0f,  9.0f,  25.0f, 25.0f,  0.0f,    5.0f, 90.0f, 25.0f, 2,  0,      0.0f, 50.0f },
+        { "Evening Sigh",   PlaceholderVowel::fallingSigh,   3.5f, 12.0f,  40.0f, 45.0f,  0.0f,   40.0f, 50.0f, 35.0f, 0,  1,      0.0f, 70.0f,   0.0f, 20.0f, 30.0f },
     };
 }
 
