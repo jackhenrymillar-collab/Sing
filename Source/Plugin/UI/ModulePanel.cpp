@@ -111,6 +111,10 @@ bool ModuleSettings::isOn (ModuleKind k) const noexcept
         case ModuleKind::binaural:    return binauralOn;
         case ModuleKind::tape:        return tapeOn;
         case ModuleKind::shimmer:     return shimmerOn;
+        case ModuleKind::ensemble:    return ensembleOn;
+        case ModuleKind::halo:        return haloOn;
+        case ModuleKind::vowel:       return vowelOn;
+        case ModuleKind::harmoniser:  return harmonyOn;
         case ModuleKind::spaceFilter: return spaceLevel > 0.0f;
     }
     return true;
@@ -118,7 +122,8 @@ bool ModuleSettings::isOn (ModuleKind k) const noexcept
 
 bool worksInBothEngines (ModuleKind k) noexcept
 {
-    return k == ModuleKind::binaural || k == ModuleKind::tape || k == ModuleKind::shimmer || k == ModuleKind::spaceFilter;
+    return k == ModuleKind::binaural || k == ModuleKind::tape || k == ModuleKind::shimmer || k == ModuleKind::spaceFilter
+        || k == ModuleKind::ensemble || k == ModuleKind::halo || k == ModuleKind::vowel || k == ModuleKind::harmoniser;
 }
 
 void drawModuleVisual (juce::Graphics& g, ModuleKind kind, juce::Rectangle<float> area, const ModuleSettings& s, float t)
@@ -459,6 +464,187 @@ void drawModuleVisual (juce::Graphics& g, ModuleKind kind, juce::Rectangle<float
             break;
         }
 
+
+        case ModuleKind::ensemble:
+        {
+            // The singers, one wave each, stacked across the stereo width (left to right is
+            // left to right). Each sways at its own slow rate (Detune) and shivers at its own
+            // vibrato; more singers, more waves.
+            const int singers = juce::jlimit (2, 8, s.ensembleSingers);
+            const float detune = juce::jlimit (0.0f, 1.0f, s.ensembleDetune / 30.0f);
+            const float vib = juce::jlimit (0.0f, 1.0f, s.ensembleVibrato * 0.01f);
+            const float width = juce::jlimit (0.0f, 1.0f, s.ensembleWidth * 0.01f);
+            for (int k = 0; k < singers; ++k)
+            {
+                const float place = singers > 1 ? (float) k / (float) (singers - 1) * 2.0f - 1.0f : 0.0f;
+                const float cx = 60.0f + place * width * 44.0f;
+                const float span = 28.0f - 1.6f * (float) singers;
+                const float sway = detune * 6.0f * std::sin (t * (0.5f + 0.4f * hash (k + 3)) + hash (k) * 6.28f);
+                const float rate = 4.5f + 2.0f * hash (k + 9);
+                juce::Path wave;
+                for (int i = 0; i <= 40; ++i)
+                {
+                    const float f = (float) i / 40.0f;
+                    const float x = cx - span + f * 2.0f * span + sway;
+                    const float y = 34.0f + 14.0f * std::sin (f * 12.0f + t * 2.4f + hash (k + 5) * 6.28f)
+                                  * (1.0f + 0.25f * vib * std::sin (t * rate + hash (k + 7) * 6.28f));
+                    if (i == 0) wave.startNewSubPath (u.x (x), u.y (y)); else wave.lineTo (u.x (x), u.y (y));
+                }
+                const float a = 0.35f + 0.6f * (1.0f - std::abs (place) * 0.5f);
+                g.setColour ((k % 2 == 0 ? Colours::gold : lavender).withAlpha (a));
+                g.strokePath (wave, juce::PathStrokeType (1.1f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                // Each singer's head above their wave.
+                g.setColour (Colours::cream.withAlpha (0.8f));
+                g.fillEllipse (u.x (cx + sway * 0.5f) - 1.8f, u.y (9.0f) - 1.8f, 3.6f, 3.6f);
+            }
+            const auto capFont = Fonts::sans (8.5f, false, 0.12f);
+            drawTrackedText (g, "L", { u.x (1.0f), u.y (1.0f), 12.0f, 10.0f }, capFont, juce::Justification::centredLeft, lavender);
+            drawTrackedText (g, "R", { u.x (119.0f) - 12.0f, u.y (1.0f), 12.0f, 10.0f }, capFont, juce::Justification::centredRight, lavender);
+            break;
+        }
+
+        case ModuleKind::halo:
+        {
+            // The note itself, moving along the top, and under it the halo: the same moment of
+            // the voice held still, a soft glow that drifts a little. Octave moves the glow
+            // down or up.
+            const float level = juce::jlimit (0.0f, 1.0f, s.haloLevel * 0.01f);
+            const float drift = juce::jlimit (0.0f, 1.0f, s.haloDrift * 0.01f);
+            const float glowY = s.haloOctave == 0 ? 50.0f : s.haloOctave == 2 ? 26.0f : 40.0f;
+            const float noteY = s.haloOctave == 2 ? 46.0f : 18.0f;
+            const float wobble = drift * 10.0f * std::sin (t * 0.7f);
+            // The glow: layered soft bands.
+            for (int layer = 4; layer >= 0; --layer)
+            {
+                const float spread = 3.0f + (float) layer * 3.0f;
+                g.setColour (lavender.withAlpha (level * (0.12f + 0.1f * (float) (4 - layer))));
+                g.fillRoundedRectangle (u.x (12.0f + wobble - spread * 0.5f), u.y (glowY - spread), u.w (96.0f + spread), u.h (spread * 2.0f), u.h (spread));
+            }
+            // Sparkle inside the halo.
+            for (int k = 0; k < 10; ++k)
+            {
+                const float x = 14.0f + hash (k + 23) * 92.0f + wobble;
+                const float tw = 0.5f + 0.5f * std::sin (t * (1.0f + hash (k)) + hash (k + 4) * 6.28f);
+                g.setColour (Colours::cream.withAlpha (level * tw * 0.8f));
+                g.fillEllipse (u.x (x) - 1.0f, u.y (glowY + (hash (k + 8) - 0.5f) * 8.0f) - 1.0f, 2.0f, 2.0f);
+            }
+            // The moving note: a wave that travels.
+            juce::Path wave;
+            for (int i = 0; i <= 60; ++i)
+            {
+                const float f = (float) i / 60.0f;
+                const float y = noteY + 7.0f * std::sin (f * 14.0f - t * 3.0f) * (0.7f + 0.3f * std::sin (f * 3.0f + t));
+                if (i == 0) wave.startNewSubPath (u.x (4.0f + f * 112.0f), u.y (y)); else wave.lineTo (u.x (4.0f + f * 112.0f), u.y (y));
+            }
+            g.setColour (Colours::gold.withAlpha (0.95f));
+            g.strokePath (wave, juce::PathStrokeType (1.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            const auto capFont = Fonts::sans (8.5f, false, 0.12f);
+            drawTrackedText (g, s.haloOctave == 0 ? "-OCT" : s.haloOctave == 2 ? "+OCT" : "HELD", { u.x (1.0f), u.y (2.0f), 40.0f, 10.0f }, capFont,
+                             juce::Justification::centredLeft, lavender);
+            break;
+        }
+
+        case ModuleKind::vowel:
+        {
+            // The vowel's shape: a spectrum with its formant peaks, which slide as the Vowel
+            // moves and breathe between neighbours. The vowels' names run along the bottom and
+            // a marker shows where the shape is now.
+            struct V { float f1, f2, f3; };
+            constexpr V vowels[5] { { 300, 870, 2240 }, { 500, 900, 2450 }, { 730, 1090, 2440 }, { 530, 1840, 2480 }, { 270, 2290, 3010 } };
+            const float depth = juce::jlimit (0.0f, 1.0f, s.vowelDepth * 0.01f);
+            const float breathe = juce::jlimit (0.0f, 1.0f, s.vowelBreathe * 0.01f);
+            const float pos = juce::jlimit (0.0f, 4.0f, s.vowel * 0.04f + breathe * 0.6f * std::sin (t * (0.4f + 1.2f * breathe)));
+            const int a = (int) std::floor (pos), b = std::min (4, a + 1);
+            const float f = pos - (float) a;
+            auto lerp = [f] (float p, float q) { return p * std::pow (q / p, f); };
+            const V now { lerp (vowels[a].f1, vowels[b].f1), lerp (vowels[a].f2, vowels[b].f2), lerp (vowels[a].f3, vowels[b].f3) };
+            auto xOf = [] (float hz) { return 4.0f + 110.0f * std::log (hz / 150.0f) / std::log (5000.0f / 150.0f); };
+            juce::Path spec;
+            for (int i = 0; i <= 100; ++i)
+            {
+                const float x = 4.0f + 110.0f * (float) i / 100.0f;
+                const float hz = 150.0f * std::pow (5000.0f / 150.0f, (float) i / 100.0f);
+                float gain = 0.2f;
+                for (float fc : { now.f1, now.f2, now.f3 })
+                {
+                    const float d = std::log (hz / fc) * 6.0f;
+                    gain += std::exp (-d * d) * (fc == now.f1 ? 1.0f : fc == now.f2 ? 0.8f : 0.55f);
+                }
+                const float y = 48.0f - depth * 36.0f * std::min (1.0f, gain) - (1.0f - depth) * 10.0f;
+                if (i == 0) spec.startNewSubPath (u.x (x), u.y (y)); else spec.lineTo (u.x (x), u.y (y));
+            }
+            juce::Path fill (spec);
+            fill.lineTo (u.x (114.0f), u.y (48.0f));
+            fill.lineTo (u.x (4.0f), u.y (48.0f));
+            fill.closeSubPath();
+            g.setColour (Colours::gold.withAlpha (0.18f));
+            g.fillPath (fill);
+            g.setColour (Colours::gold.withAlpha (0.95f));
+            g.strokePath (spec, juce::PathStrokeType (1.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            for (float fc : { now.f1, now.f2, now.f3 })
+            {
+                g.setColour (lavender.withAlpha (0.35f));
+                g.fillRect (u.x (xOf (fc)) - 0.5f, u.y (14.0f), 1.0f, u.h (34.0f));
+            }
+            const auto capFont = Fonts::sans (8.0f, false, 0.1f);
+            const char* names[5] { "OOH", "OH", "AH", "EH", "EE" };
+            for (int k = 0; k < 5; ++k)
+            {
+                const float x = 4.0f + 110.0f * (float) k / 4.0f;
+                const bool near = std::abs (pos - (float) k) < 0.5f;
+                const auto just = k == 0 ? juce::Justification::centredLeft : k == 4 ? juce::Justification::centredRight : juce::Justification::centred;
+                drawTrackedText (g, names[k], { k == 0 ? u.x (2.0f) : k == 4 ? u.x (118.0f) - 28.0f : u.x (x) - 14.0f, u.y (52.0f), 28.0f, 10.0f },
+                                 capFont, just, near ? Colours::cream : Colours::muted);
+            }
+            g.setColour (Colours::cream.withAlpha (0.9f));
+            g.fillEllipse (u.x (4.0f + 110.0f * pos / 4.0f) - 1.8f, u.y (49.0f) - 1.8f, 3.6f, 3.6f);
+            break;
+        }
+
+        case ModuleKind::harmoniser:
+        {
+            // A played note along the middle and its harmony notes above and below, each a
+            // scale step apart on the lines of the key. The notes rise and fall together as a
+            // small phrase plays, the harmony always on a line of the scale.
+            static constexpr int degreesOf[6][7] { { 0, 2, 4, 5, 7, 9, 11 }, { 0, 2, 3, 5, 7, 8, 10 }, { 0, 2, 3, 5, 7, 9, 10 },
+                                                   { 0, 2, 4, 5, 7, 9, 10 }, { 0, 2, 4, 6, 7, 9, 11 }, { 0, 2, 4, 7, 9, 12, 14 } };
+            const int scale = juce::jlimit (0, 5, s.harmonyScale);
+            const int steps = scale == 5 ? 5 : 7;
+            const int up = juce::jlimit (0, 5, s.harmonyAbove), down = juce::jlimit (0, 5, s.harmonyBelow);
+            const int intervalSteps[6] { 0, 2, 3, 4, 5, steps };
+            // Staff lines: one per scale degree over two octaves.
+            auto yOf = [&] (int degree) { return 55.0f - 3.0f * (float) degree; };
+            for (int d = 0; d <= 2 * steps; ++d)
+            {
+                g.setColour (base.withAlpha (d % steps == 0 ? 0.5f : 0.2f));
+                g.fillRect (u.x (14.0f), u.y (yOf (d)) - 0.5f, u.w (104.0f), 1.0f);
+            }
+            // The phrase: the played note stepping through the scale.
+            const int phrase[8] { 4, 5, 6, 5, 4, 2, 3, 4 };
+            for (int n = 0; n < 8; ++n)
+            {
+                const float x = 20.0f + 13.5f * (float) n;
+                const int degree = phrase[n] + steps - 4;
+                const float lit = 0.5f + 0.5f * std::sin (t * 1.4f - (float) n * 0.8f);
+                g.setColour (Colours::gold.withAlpha (0.55f + 0.45f * lit));
+                g.fillEllipse (u.x (x) - 2.6f, u.y (yOf (degree)) - 2.0f, 5.2f, 4.0f);
+                if (up > 0)
+                {
+                    g.setColour (lavender.withAlpha (0.45f + 0.4f * lit));
+                    g.fillEllipse (u.x (x) - 2.2f, u.y (yOf (degree + intervalSteps[up])) - 1.7f, 4.4f, 3.4f);
+                }
+                if (down > 0)
+                {
+                    g.setColour (Colours::cream.withAlpha (0.4f + 0.4f * lit));
+                    g.fillEllipse (u.x (x) - 2.2f, u.y (yOf (degree - intervalSteps[down])) - 1.7f, 4.4f, 3.4f);
+                }
+            }
+            const auto capFont = Fonts::sans (8.5f, false, 0.12f);
+            const juce::String key = harmonyKeyNames()[juce::jlimit (0, 11, s.harmonyKey)] + " " + harmonyScaleNames()[scale].toUpperCase();
+            drawTrackedText (g, key, { u.x (1.0f), u.y (0.0f), 110.0f, 10.0f }, capFont, juce::Justification::centredLeft, lavender);
+            break;
+        }
+
         case ModuleKind::shimmer:
         {
             // Pitch runs upwards here and time to the right. A held note along the bottom, and
@@ -656,8 +842,8 @@ void ModuleTile::update (const ModuleSettings& s, float time, bool resting)
 
 juce::Rectangle<float> ModuleTile::visualArea() const
 {
-    // Space and Tape have four rows of controls, so their pictures are shorter.
-    if (moduleKind == ModuleKind::spaceFilter || moduleKind == ModuleKind::tape)
+    // Tiles with four rows of controls have shorter pictures.
+    if (isCompact())
         return { 14.0f, 40.0f, (float) getWidth() - 28.0f, 34.0f };
     return { 14.0f, 40.0f, (float) getWidth() - 28.0f, 56.0f };
 }
@@ -710,7 +896,7 @@ void ModuleTile::resized()
         headerToggle->setBounds (juce::Rectangle<float> (w - 14.0f - tw, 9.0f, tw, 22.0f).toNearestInt());
     }
 
-    const bool compact = moduleKind == ModuleKind::spaceFilter || moduleKind == ModuleKind::tape;
+    const bool compact = isCompact();
     float y = compact ? 80.0f : 104.0f;
     for (auto& c : controls)
     {
@@ -845,14 +1031,14 @@ ModulesPanel::ModulesPanel (juce::AudioProcessorValueTreeState& s) : state (s)
             "How fast the beat between your ears pulses. Best heard on headphones");
     attach (binaural.addControl ("Amount"), ParamID::binauralAmount, percent, "How much of the beat to mix in");
 
-    auto& tape = add (ModuleKind::tape, "TAPE", true);
+    auto& tape = add (ModuleKind::tape, "TAPE", false);
     power (tape, ParamID::tapeOn);
     attach (tape.addControl ("Wow"), ParamID::tapeWow, percent, "A slow sway in pitch, like a reel that turns a little unevenly");
     attach (tape.addControl ("Flutter"), ParamID::tapeFlutter, percent, "A quick shiver in pitch, from a worn capstan");
     attach (tape.addControl ("Drive"), ParamID::tapeDrive, percent, "Pushes the voice into the tape: warmer, rounder, softly saturated");
     attach (tape.addControl ("Age"), ParamID::tapeAge, percent, "Rolls off the highs, the way old tape loses its top end");
 
-    auto& shimmer = add (ModuleKind::shimmer, "SHIMMER", true);
+    auto& shimmer = add (ModuleKind::shimmer, "SHIMMER", false);
     power (shimmer, ParamID::shimmerOn);
     attach (shimmer.addControl ("Amount"), ParamID::shimmerAmount, percent,
             "How much of the pitched-up voice feeds the Space reverb. Turn Space up to hear it");
@@ -878,6 +1064,60 @@ ModulesPanel::ModulesPanel (juce::AudioProcessorValueTreeState& s) : state (s)
             });
         intervalAttachment->sendInitialUpdate();
     }
+
+    auto& ensemble = add (ModuleKind::ensemble, "ENSEMBLE", true);
+    power (ensemble, ParamID::ensembleOn);
+    attach (ensemble.addControl ("Singers"), ParamID::ensembleSingers, [] (double v) { return juce::String (juce::roundToInt (v)); },
+            "How many singers take each note. Each is a little apart from the others in tuning, vibrato and vowel");
+    attach (ensemble.addControl ("Detune"), ParamID::ensembleDetune, [] (double v) { return formatCents ((float) v); },
+            "How far the singers wander from the note, slowly and each their own way");
+    attach (ensemble.addControl ("Vibrato"), ParamID::ensembleVibrato, percent, "Each singer's own vibrato, at their own speed");
+    attach (ensemble.addControl ("Width"), ParamID::ensembleWidth, percent, "How far across the stereo field the singers stand");
+
+    auto& halo = add (ModuleKind::halo, "HALO", true);
+    power (halo, ParamID::haloOn);
+    attach (halo.addControl ("Level"), ParamID::haloLevel, percent,
+            "A frozen copy of the note held under it: the moment where the note began, hanging still");
+    attach (halo.addControl ("Drift"), ParamID::haloDrift, percent, "How far the held moment slowly drifts through the voice");
+    {
+        const auto names = haloOctaveNames();
+        const char* tips[3] { "The halo an octave below the note", "The halo at the note's own pitch", "The halo an octave above the note" };
+        for (int i = 0; i < 3; ++i)
+        {
+            auto& b = halo.addChoice (names[i].toUpperCase());
+            b.setTooltip (tips[i]);
+            b.onClick = [this, i] { haloOctaveAttachment->setValueAsCompleteGesture ((float) i); };
+            haloOctaveButtons[(size_t) i] = &b;
+        }
+        haloOctaveAttachment = std::make_unique<juce::ParameterAttachment> (
+            *state.getParameter (ParamID::haloOctave),
+            [this] (float value)
+            {
+                const int chosen = juce::roundToInt (value);
+                for (int i = 0; i < 3; ++i)
+                    haloOctaveButtons[(size_t) i]->setToggleState (i == chosen, juce::dontSendNotification);
+            });
+        haloOctaveAttachment->sendInitialUpdate();
+    }
+
+    auto& vowel = add (ModuleKind::vowel, "VOWEL", true);
+    power (vowel, ParamID::vowelOn);
+    attach (vowel.addControl ("Vowel"), ParamID::vowelShape, [] (double v) { return formatVowel ((float) v); },
+            "The vowel shaped over the sound, from ooh through ah to ee. Works on any voice, synth or instrument");
+    attach (vowel.addControl ("Depth"), ParamID::vowelDepth, percent, "How strongly the vowel is shaped");
+    attach (vowel.addControl ("Breathe"), ParamID::vowelBreathe, percent,
+            "The vowel slowly opens and closes towards its neighbours, like a mouth breathing. 0 holds it still");
+
+    auto& harmoniser = add (ModuleKind::harmoniser, "HARMONISER", false);
+    power (harmoniser, ParamID::harmonyOn);
+    attach (harmoniser.addControl ("Key"), ParamID::harmonyKey, [] (double v) { return harmonyKeyNames()[juce::jlimit (0, 11, juce::roundToInt (v))]; },
+            "The key the harmony notes stay in");
+    attach (harmoniser.addControl ("Scale"), ParamID::harmonyScale, [] (double v) { return harmonyScaleNames()[juce::jlimit (0, 5, juce::roundToInt (v))]; },
+            "The scale the harmony notes are chosen from");
+    attach (harmoniser.addControl ("Above"), ParamID::harmonyAbove, [] (double v) { return harmonyIntervalNames()[juce::jlimit (0, 5, juce::roundToInt (v))]; },
+            "A second voice this far above every note you play, kept in key");
+    attach (harmoniser.addControl ("Below"), ParamID::harmonyBelow, [] (double v) { return harmonyIntervalNames()[juce::jlimit (0, 5, juce::roundToInt (v))]; },
+            "A third voice this far below every note you play, kept in key");
 
     // The Space reverb: the big Space knob sets its level, this tile everything else.
     auto& space = add (ModuleKind::spaceFilter, "SPACE", false);
@@ -950,6 +1190,24 @@ ModuleSettings ModulesPanel::readSettings() const
     s.shimmerInterval = juce::roundToInt (value (ParamID::shimmerInterval));
     s.tapeOn = on (ParamID::tapeOn);
     s.shimmerOn = on (ParamID::shimmerOn);
+    s.ensembleSingers = juce::roundToInt (value (ParamID::ensembleSingers));
+    s.ensembleDetune = value (ParamID::ensembleDetune);
+    s.ensembleVibrato = value (ParamID::ensembleVibrato);
+    s.ensembleWidth = value (ParamID::ensembleWidth);
+    s.haloLevel = value (ParamID::haloLevel);
+    s.haloDrift = value (ParamID::haloDrift);
+    s.haloOctave = juce::roundToInt (value (ParamID::haloOctave));
+    s.vowel = value (ParamID::vowelShape);
+    s.vowelDepth = value (ParamID::vowelDepth);
+    s.vowelBreathe = value (ParamID::vowelBreathe);
+    s.harmonyKey = juce::roundToInt (value (ParamID::harmonyKey));
+    s.harmonyScale = juce::roundToInt (value (ParamID::harmonyScale));
+    s.harmonyAbove = juce::roundToInt (value (ParamID::harmonyAbove));
+    s.harmonyBelow = juce::roundToInt (value (ParamID::harmonyBelow));
+    s.ensembleOn = on (ParamID::ensembleOn);
+    s.haloOn = on (ParamID::haloOn);
+    s.vowelOn = on (ParamID::vowelOn);
+    s.harmonyOn = on (ParamID::harmonyOn);
     return s;
 }
 
@@ -963,7 +1221,11 @@ void ModulesPanel::resetAll()
                       ParamID::binauralOn, ParamID::binauralRate, ParamID::binauralAmount,
                       ParamID::spaceFilterOn, ParamID::spaceLow, ParamID::spaceHigh, ParamID::spaceDecay, ParamID::spaceSize,
                       ParamID::tapeOn, ParamID::tapeWow, ParamID::tapeFlutter, ParamID::tapeDrive, ParamID::tapeAge,
-                      ParamID::shimmerOn, ParamID::shimmerAmount, ParamID::shimmerRise, ParamID::shimmerInterval })
+                      ParamID::shimmerOn, ParamID::shimmerAmount, ParamID::shimmerRise, ParamID::shimmerInterval,
+                      ParamID::ensembleOn, ParamID::ensembleSingers, ParamID::ensembleDetune, ParamID::ensembleVibrato, ParamID::ensembleWidth,
+                      ParamID::haloOn, ParamID::haloLevel, ParamID::haloDrift, ParamID::haloOctave,
+                      ParamID::vowelOn, ParamID::vowelShape, ParamID::vowelDepth, ParamID::vowelBreathe,
+                      ParamID::harmonyOn, ParamID::harmonyKey, ParamID::harmonyScale, ParamID::harmonyAbove, ParamID::harmonyBelow })
     {
         auto* p = state.getParameter (id);
         p->beginChangeGesture();
@@ -1001,7 +1263,7 @@ void ModulesPanel::paint (juce::Graphics& g)
     drawTrackedText (g, "MODULES", { 0.0f, 0.0f, 120.0f, headingHeight }, capFont, juce::Justification::centredLeft, Colours::gold);
     const float x = trackedTextWidth ("MODULES", capFont) + 18.0f;
     const juce::String note = bloom ? "How Bloom shapes the sound. Tap a light to switch a module on or off."
-                                    : "Most modules shape Bloom and rest while Grain plays. Binaural, Tape, Shimmer and Space work in both.";
+                                    : "Most modules shape Bloom and rest while Grain plays. The bottom row, Binaural and Tape work in both.";
     drawTrackedText (g, note, { x, 0.0f, w - x - 140.0f, headingHeight }, Fonts::sans (12.0f), juce::Justification::centredLeft, Colours::muted);
 }
 

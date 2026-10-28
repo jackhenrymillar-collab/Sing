@@ -78,6 +78,27 @@ namespace ParamID
     inline constexpr auto shimmerAmount   = "shimmeramount";
     inline constexpr auto shimmerRise     = "shimmerrise";
     inline constexpr auto shimmerInterval = "shimmerinterval";
+    // Ensemble: a few singers on every note, each a little apart. Halo: a frozen copy of the
+    // note held under it. Vowel: a vowel shape over the sound that can breathe between two.
+    // Harmoniser: extra notes in key, above and below each key played.
+    inline constexpr auto ensembleOn      = "ensembleon";
+    inline constexpr auto ensembleSingers = "ensemblesingers";
+    inline constexpr auto ensembleDetune  = "ensembledetune";
+    inline constexpr auto ensembleVibrato = "ensemblevibrato";
+    inline constexpr auto ensembleWidth   = "ensemblewidth";
+    inline constexpr auto haloOn          = "haloon";
+    inline constexpr auto haloLevel       = "halolevel";
+    inline constexpr auto haloDrift       = "halodrift";
+    inline constexpr auto haloOctave      = "halooctave";
+    inline constexpr auto vowelOn         = "vowelon";
+    inline constexpr auto vowelShape      = "vowel";
+    inline constexpr auto vowelDepth      = "voweldepth";
+    inline constexpr auto vowelBreathe    = "vowelbreathe";
+    inline constexpr auto harmonyOn       = "harmonyon";
+    inline constexpr auto harmonyKey      = "harmonykey";
+    inline constexpr auto harmonyScale    = "harmonyscale";
+    inline constexpr auto harmonyAbove    = "harmonyabove";
+    inline constexpr auto harmonyBelow    = "harmonybelow";
     // Movement: an orbit for each big knob that can move, Wander for the loop, and the
     // strip that sets the shape and speed for all of them.
     inline constexpr auto orbitStretch   = "orbitstretch";
@@ -132,5 +153,10 @@ juce::String formatHz (float hz);
 juce::String formatCents (float cents);
 juce::String formatOrbit (float percent);
 juce::StringArray shimmerIntervalNames();
+juce::StringArray haloOctaveNames();       // Down, Same, Up
+juce::StringArray harmonyKeyNames();       // C to B
+juce::StringArray harmonyScaleNames();     // Major, Minor, Dorian, Mixolydian, Lydian, Pentatonic
+juce::StringArray harmonyIntervalNames();  // Off, 3rd, 4th, 5th, 6th, Octave
+juce::String formatVowel (float v);        // the vowel at 0 to 100: OOH, OH, AH, EH, EE and between
 
 } // namespace sing
