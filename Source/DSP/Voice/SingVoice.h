@@ -2,6 +2,7 @@
 
 #include "Bloom/BloomVoice.h"
 #include "Stretch/GranularEngine.h"
+#include "Voice/Ensemble.h"
 #include "Voice/FormantShifter.h"
 #include "Voice/StftPitchShifter.h"
 #include "Voice/Movement.h"
@@ -51,6 +52,15 @@ struct VoiceSettings
     float compressor = 0.0f;         // Compressor: 0 off to 1, each frame toward the loop's typical level
     bool octaves = false;            // Octaves: the spectrum mixed with copies -2, -1, 0, +1, +1 and a fifth, +2 octaves away
     std::array<float, 6> octaveLevels { 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f };
+
+    // Ensemble: singers on every note (0 or 1 is off, else 2 to 8), how far they wander in
+    // cents, their vibrato and how wide they stand (0 to 1).
+    int ensembleSingers = 0;
+    float ensembleDetune = 10.0f, ensembleVibrato = 0.4f, ensembleWidth = 0.7f;
+    // Halo: a frozen copy of the note under it. 0 is off; drift 0 to 1 lets the held moment
+    // wander through the voice; octave -1, 0 or +1.
+    float haloLevel = 0.0f, haloDrift = 0.0f;
+    int haloOctave = 0;
 
     // The voice's root pitch. Unpitched voices (breaths) still map keys from rootHz, but the
     // formant shifter uses short frames and a fixed envelope width instead of the period.
@@ -165,6 +175,21 @@ private:
     // One formant shifter for the whole note, after the Spread copies are mixed: the copies
     // share the note's formant setting, so they don't each need one.
     FormantShifter shifter;
+    // Ensemble's singers, on the mixed note.
+    Ensemble ensemble;
+    // Halo: one frozen granular engine on the moment the note began. In Grain mode it joins
+    // the copies before the shifter (so it keeps the vowel like they do); in Bloom's formant
+    // mode it has the note's otherwise idle formant shifter to itself.
+    GranularEngine haloEngine;
+    bool haloRunning = false;
+    float haloGain = 0.0f;
+    double haloAge = 0.0;
+    std::vector<float> haloLeft, haloRight;
+    void startHalo() noexcept;
+    void renderHalo (int numSamples, bool preShifter) noexcept;
+    float haloRatio() const noexcept;
+    // Ensemble on the mixed note, then the envelope.
+    void finishSubBlock (float* left, float* right, int numSamples) noexcept;
     // The STFT pitch mode's shifter, used instead for notes started in that mode.
     StftPitchShifter stft;
     bool stftNote = false;

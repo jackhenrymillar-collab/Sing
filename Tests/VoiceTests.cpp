@@ -535,6 +535,142 @@ TEST_CASE ("Synth: Spread widens the note and keeps its level")
     CHECK (allFinite (wide));
 }
 
+TEST_CASE ("Ensemble: the singers widen the note, wander a little and keep its level")
+{
+    auto src = placeholderSource (PlaceholderVowel::ooh);
+    auto play = [&src] (int singers, float width)
+    {
+        SingSynth synth;
+        synth.prepare (sr, 256);
+        synth.setSource (src.get());
+        auto s = plainSynth (220.0f);
+        s.voice.ensembleSingers = singers;
+        s.voice.ensembleDetune = 12.0f;
+        s.voice.ensembleVibrato = 0.5f;
+        s.voice.ensembleWidth = width;
+        synth.setSettings (s);
+        synth.noteOn (57, 1.0f);
+        return renderSynth (synth, 96000);
+    };
+    const auto alone = play (0, 0.0f);
+    const auto six = play (6, 1.0f);
+    const auto sixNarrow = play (6, 0.0f);
+
+    auto sideRatio = [] (const Render& r)
+    {
+        double mid = 0.0, side = 0.0;
+        for (size_t i = 9600; i < r.left.size(); ++i)
+        {
+            const double m = 0.5 * (r.left[i] + r.right[i]), sd = 0.5 * (r.left[i] - r.right[i]);
+            mid += m * m;
+            side += sd * sd;
+        }
+        return side / std::max (mid, 1.0e-12);
+    };
+    CHECK (sideRatio (six) > 0.05);
+    CHECK (sideRatio (sixNarrow) < 1.0e-6);
+
+    const double lAlone = rms (alone.left.data() + 9600, 86400) + rms (alone.right.data() + 9600, 86400);
+    const double lSix = rms (six.left.data() + 9600, 86400) + rms (six.right.data() + 9600, 86400);
+    INFO ("level change " << db (lSix / lAlone) << " dB");
+    CHECK (std::abs (db (lSix / lAlone)) < 3.0);
+
+    // Still the note, and still clean.
+    const auto m = mono (six);
+    CHECK_THAT (detectPitch (m.data() + 9600, 38400, sr).hz, WithinAbs (220.0, 3.0));
+    CHECK (allFinite (six));
+}
+
+TEST_CASE ("Halo: a frozen copy sits under the note, an octave either way if asked")
+{
+    auto src = placeholderSource (PlaceholderVowel::ooh);
+    auto play = [&src] (float level, int octave, bool bloom)
+    {
+        SingSynth synth;
+        synth.prepare (sr, 256);
+        synth.setSource (src.get());
+        auto s = plainSynth (220.0f);
+        s.voice.haloLevel = level;
+        s.voice.haloOctave = octave;
+        s.voice.haloDrift = 0.5f;
+        if (bloom)
+            s.voice.mode = StretchMode::bloom;
+        synth.setSettings (s);
+        synth.noteOn (57, 1.0f);
+        return mono (renderSynth (synth, 96000));
+    };
+    const auto plain = play (0.0f, 0, false);
+    const auto halo = play (1.0f, 0, false);
+    const auto down = play (1.0f, -1, false);
+
+    // Louder with the halo, and not wildly so.
+    const double gain = db (rms (halo.data() + 9600, 86400) / rms (plain.data() + 9600, 86400));
+    INFO ("halo adds " << gain << " dB");
+    CHECK (gain > 1.0);
+    CHECK (gain < 8.0);
+    CHECK_THAT (detectPitch (halo.data() + 9600, 38400, sr).hz, WithinAbs (220.0, 3.0));
+
+    // An octave down: energy appears at 110 Hz that the plain note lacks.
+    auto at = [] (const std::vector<float>& x, double hz)
+    {
+        double re = 0.0, im = 0.0;
+        for (int i = 9600; i < 96000; ++i)
+        {
+            const double w = twoPi * hz * i / sr;
+            re += x[(size_t) i] * std::cos (w);
+            im += x[(size_t) i] * std::sin (w);
+        }
+        return std::sqrt (re * re + im * im);
+    };
+    INFO ("110 Hz: plain " << at (plain, 110.0) << ", halo down " << at (down, 110.0));
+    CHECK (at (down, 110.0) > 10.0 * at (plain, 110.0));
+
+    // Bloom notes get one too, through the note's formant shifter.
+    for (float v : play (1.0f, 0, true))
+        REQUIRE (std::isfinite (v));
+}
+
+TEST_CASE ("Harmoniser: harmony notes stay in key, follow the played key and end with it")
+{
+    // C major: a third above C is E, above E is G, above B is D of the next octave; a sixth
+    // below C is E of the octave below; an octave is twelve semitones.
+    CHECK (harmonyNote (60, 0, 0, 1, true) == 64);
+    CHECK (harmonyNote (64, 0, 0, 1, true) == 67);
+    CHECK (harmonyNote (71, 0, 0, 1, true) == 74);
+    CHECK (harmonyNote (60, 0, 0, 4, false) == 52);
+    CHECK (harmonyNote (60, 0, 0, 5, true) == 72);
+    CHECK (harmonyNote (60, 0, 0, 5, false) == 48);
+    // A minor: a third above A is C; a fifth above E is B.
+    CHECK (harmonyNote (69, 9, 1, 1, true) == 72);
+    CHECK (harmonyNote (64, 9, 1, 3, true) == 71);
+    // A note off the scale snaps first: C# in C major counts as C (the lower of the two).
+    CHECK (harmonyNote (61, 0, 0, 1, true) == 64);
+    // Pentatonic (C D E G A): intervals count scale steps, so two steps above C is E, above
+    // E is A and above A is D of the next octave.
+    CHECK (harmonyNote (60, 0, 5, 1, true) == 64);
+    CHECK (harmonyNote (64, 0, 5, 1, true) == 69);
+    CHECK (harmonyNote (69, 0, 5, 1, true) == 74);
+    CHECK (harmonyNote (60, 0, 0, 0, true) == 60);
+
+    auto src = placeholderSource (PlaceholderVowel::ooh);
+    SingSynth synth;
+    synth.prepare (sr, 256);
+    synth.setSource (src.get());
+    auto s = plainSynth (220.0f);
+    s.harmony.on = true;
+    s.harmony.above = 1;
+    s.harmony.below = 3;
+    synth.setSettings (s);
+    synth.noteOn (60, 1.0f);
+    CHECK (synth.activeVoiceCount() == 3);
+    const auto r = renderSynth (synth, 48000);
+    CHECK (allFinite (r));
+    // Letting go of the key releases its harmony notes too.
+    synth.noteOff (60);
+    renderSynth (synth, 96000);
+    CHECK (synth.activeVoiceCount() == 0);
+}
+
 TEST_CASE ("Synth: Glide slides from the last note in the set time")
 {
     auto src = placeholderSource (PlaceholderVowel::ooh);

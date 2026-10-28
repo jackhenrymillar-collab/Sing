@@ -71,6 +71,24 @@ SingProcessor::SingProcessor()
     shimmerAmount = state.getRawParameterValue (ParamID::shimmerAmount);
     shimmerRise = state.getRawParameterValue (ParamID::shimmerRise);
     shimmerInterval = state.getRawParameterValue (ParamID::shimmerInterval);
+    ensembleOn = state.getRawParameterValue (ParamID::ensembleOn);
+    ensembleSingers = state.getRawParameterValue (ParamID::ensembleSingers);
+    ensembleDetune = state.getRawParameterValue (ParamID::ensembleDetune);
+    ensembleVibrato = state.getRawParameterValue (ParamID::ensembleVibrato);
+    ensembleWidth = state.getRawParameterValue (ParamID::ensembleWidth);
+    haloOn = state.getRawParameterValue (ParamID::haloOn);
+    haloLevel = state.getRawParameterValue (ParamID::haloLevel);
+    haloDrift = state.getRawParameterValue (ParamID::haloDrift);
+    haloOctave = state.getRawParameterValue (ParamID::haloOctave);
+    vowelOn = state.getRawParameterValue (ParamID::vowelOn);
+    vowelShape = state.getRawParameterValue (ParamID::vowelShape);
+    vowelDepth = state.getRawParameterValue (ParamID::vowelDepth);
+    vowelBreathe = state.getRawParameterValue (ParamID::vowelBreathe);
+    harmonyOn = state.getRawParameterValue (ParamID::harmonyOn);
+    harmonyKey = state.getRawParameterValue (ParamID::harmonyKey);
+    harmonyScale = state.getRawParameterValue (ParamID::harmonyScale);
+    harmonyAbove = state.getRawParameterValue (ParamID::harmonyAbove);
+    harmonyBelow = state.getRawParameterValue (ParamID::harmonyBelow);
     spaceFilterOn = state.getRawParameterValue (ParamID::spaceFilterOn);
     spaceLow = state.getRawParameterValue (ParamID::spaceLow);
     spaceHigh = state.getRawParameterValue (ParamID::spaceHigh);
@@ -280,8 +298,10 @@ void SingProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     binaural.set (binauralOn->load() > 0.5f, binauralRate->load(), binauralAmount->load() * 0.01f);
     binaural.reset();
     tape.prepare (sampleRate);
+    vowel.prepare (sampleRate);
     setTape();
     tape.reset();
+    vowel.reset();
     space.prepare (sampleRate, juce::jmax (512, samplesPerBlock));
     setShimmer();
     space.setFilter (spaceFilterOn->load() > 0.5f, spaceLow->load(), spaceHigh->load());
@@ -339,6 +359,18 @@ SynthSettings SingProcessor::readSettings() const noexcept
                              octaveUp1->load() * 0.01f, octaveUp15->load() * 0.01f, octaveUp2->load() * 0.01f };
     s.voice.keepVowel = keepVowel->load() > 0.5f;
     s.voice.pitchMode = juce::roundToInt (pitchMode->load()) == 1 ? PitchMode::stft : PitchMode::formant;
+    s.voice.ensembleSingers = isOn (ensembleOn) ? juce::roundToInt (ensembleSingers->load()) : 0;
+    s.voice.ensembleDetune = ensembleDetune->load();
+    s.voice.ensembleVibrato = ensembleVibrato->load() * 0.01f;
+    s.voice.ensembleWidth = ensembleWidth->load() * 0.01f;
+    s.voice.haloLevel = isOn (haloOn) ? haloLevel->load() * 0.01f : 0.0f;
+    s.voice.haloDrift = haloDrift->load() * 0.01f;
+    s.voice.haloOctave = juce::roundToInt (haloOctave->load()) - 1;
+    s.harmony.on = isOn (harmonyOn);
+    s.harmony.key = juce::roundToInt (harmonyKey->load());
+    s.harmony.scale = juce::roundToInt (harmonyScale->load());
+    s.harmony.above = juce::roundToInt (harmonyAbove->load());
+    s.harmony.below = juce::roundToInt (harmonyBelow->load());
     s.voice.rootHz = rootHz.load();
     s.voice.pitched = rootPitched.load();
     s.polyphony = juce::roundToInt (voices->load());
@@ -431,6 +463,7 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         air.reset();
         binaural.reset();
         tape.reset();
+        vowel.reset();
     }
 
     // Pick up a rebuilt loop, and hand back any old one no note uses any more.
@@ -494,6 +527,7 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
             air.reset();
             space.reset();
             tape.reset();
+            vowel.reset();
         }
     }
 
@@ -540,8 +574,10 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     space.setFilter (spaceFilterOn->load() > 0.5f, spaceLow->load(), spaceHigh->load());
     space.setDecay (spaceDecay->load());
     space.setSize (spaceSize->load() * 0.01f);
+    vowel.set (vowelOn->load() > 0.5f, vowelShape->load() * 0.01f, vowelDepth->load() * 0.01f, vowelBreathe->load() * 0.01f);
     if (right != nullptr)
     {
+        vowel.process (left, right, numSamples);
         tape.process (left, right, numSamples);
         binaural.process (left, right, numSamples);
         air.process (left, right, numSamples);
@@ -553,6 +589,7 @@ void SingProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         {
             const int n = std::min (numSamples - pos, (int) monoRight.size());
             std::copy (left + pos, left + pos + n, monoRight.begin());
+            vowel.process (left + pos, monoRight.data(), n);
             tape.process (left + pos, monoRight.data(), n);
             air.process (left + pos, monoRight.data(), n);
             space.process (left + pos, monoRight.data(), n);

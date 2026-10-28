@@ -8,6 +8,7 @@
 #include "Effects/Binaural.h"
 #include "Effects/Space.h"
 #include "Effects/Tape.h"
+#include "Effects/Vowel.h"
 #include "Voice/SingSynth.h"
 #include "Voice/SourceExchange.h"
 
@@ -132,6 +133,7 @@ private:
     Space space;
     Binaural binaural;
     Tape tape;
+    Vowel vowel;
     std::vector<float> monoRight;   // a right channel for the effects when the output is mono
     std::atomic<bool> loopDirty { true };
     std::atomic<int> voiceTrimStart { 0 }, voiceTrimLength { 1 };
@@ -206,6 +208,24 @@ private:
     std::atomic<float>* shimmerAmount = nullptr;
     std::atomic<float>* shimmerRise = nullptr;
     std::atomic<float>* shimmerInterval = nullptr;
+    std::atomic<float>* ensembleOn = nullptr;
+    std::atomic<float>* ensembleSingers = nullptr;
+    std::atomic<float>* ensembleDetune = nullptr;
+    std::atomic<float>* ensembleVibrato = nullptr;
+    std::atomic<float>* ensembleWidth = nullptr;
+    std::atomic<float>* haloOn = nullptr;
+    std::atomic<float>* haloLevel = nullptr;
+    std::atomic<float>* haloDrift = nullptr;
+    std::atomic<float>* haloOctave = nullptr;
+    std::atomic<float>* vowelOn = nullptr;
+    std::atomic<float>* vowelShape = nullptr;
+    std::atomic<float>* vowelDepth = nullptr;
+    std::atomic<float>* vowelBreathe = nullptr;
+    std::atomic<float>* harmonyOn = nullptr;
+    std::atomic<float>* harmonyKey = nullptr;
+    std::atomic<float>* harmonyScale = nullptr;
+    std::atomic<float>* harmonyAbove = nullptr;
+    std::atomic<float>* harmonyBelow = nullptr;
     void setTape() noexcept;
     void setShimmer() noexcept;
     std::atomic<float>* spaceFilterOn = nullptr;

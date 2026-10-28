@@ -105,6 +105,10 @@ void SingVoice::prepare (double sampleRate, int maxBlockSize)
     shifter.prepare (hostRate, 0.04f);
     stft.prepare (hostRate, 0.04f);
     bloom.prepare (hostRate);
+    ensemble.prepare (hostRate);
+    haloEngine.prepare (hostRate, subBlock);
+    haloLeft.assign ((size_t) subBlock, 0.0f);
+    haloRight.assign ((size_t) subBlock, 0.0f);
     envelopeGains.assign ((size_t) subBlock, 0.0f);
     mixLeft.assign ((size_t) subBlock, 0.0f);
     mixRight.assign ((size_t) subBlock, 0.0f);
@@ -210,6 +214,11 @@ void SingVoice::start (const LoopSource& src, int midiNote, float velocity, cons
     released = false;
     envelope.start (settings.attackSeconds);
     updateMovement (0, true);
+    ensemble.start (seedBase ^ 0x5bd1e995u);
+    ensemble.set (settings.ensembleSingers, settings.ensembleDetune, settings.ensembleVibrato, settings.ensembleWidth);
+    haloRunning = false;
+    haloGain = 0.0f;
+    haloAge = 0.0;
 
     stftNote = settings.pitchMode == PitchMode::stft;
     bloomNote = settings.mode == StretchMode::bloom && BloomVoice::canPlay (src);
@@ -233,6 +242,8 @@ void SingVoice::start (const LoopSource& src, int midiNote, float velocity, cons
         applyWander (true);
         if (stftNote)
             primeBloomShifter();
+        else if (settings.haloLevel > 0.0f)
+            shifter.start (0.0f, formantRatioNow());   // the halo's own; its period follows once it runs
         return;
     }
 
@@ -241,6 +252,88 @@ void SingVoice::start (const LoopSource& src, int midiNote, float velocity, cons
             startCopy (i);
     applyWander (true);
     primeShifter();
+}
+
+float SingVoice::haloRatio() const noexcept
+{
+    // The halo plays at the note's pitch (Spread's centre copy), an octave either way if asked.
+    // In STFT mode the grains play at the recorded pitch and the shifter moves the mix.
+    const float octave = std::exp2 ((float) voiceSettings.haloOctave);
+    if (stftNote)
+        return octave;
+    return std::exp2 (semitones / 12.0f) * octave;
+}
+
+void SingVoice::startHalo() noexcept
+{
+    if (source == nullptr)
+        return;
+    haloEngine.setSeed (seedBase * 2246822519u + 7u);
+    haloEngine.setSettings (StretchKnob::toGranularSettings (1.0f));
+    haloEngine.setParameters ({ 0.0f, haloRatio(), true });
+    // The moment the note began: where its centre copy started, with Wander's offset.
+    haloEngine.start (*source, std::fmod (std::max (0.0, wanderApplied), (double) std::max (1, source->size())));
+    haloRunning = true;
+    haloGain = 0.0f;
+    haloAge = 0.0;
+}
+
+void SingVoice::renderHalo (int n, bool preShifter) noexcept
+{
+    // A frozen engine plays quieter than a moving one, so the halo is given more than unity.
+    const float targetGain = std::clamp (voiceSettings.haloLevel, 0.0f, 1.0f) * 1.4f;
+    if (! haloRunning)
+    {
+        if (targetGain <= 0.0f)
+            return;
+        startHalo();
+    }
+    if (targetGain <= 0.0f && haloGain <= 0.0f)
+    {
+        haloEngine.stop();
+        haloRunning = false;
+        return;
+    }
+
+    // Drift: the held moment wanders back and forth through the voice, a slow sway whose
+    // reach grows with the setting (up to about a second either way).
+    const double t = haloAge;
+    haloAge += (double) n / hostRate;
+    const float drift = std::clamp (voiceSettings.haloDrift, 0.0f, 1.0f);
+    if (drift > 0.0f && source != nullptr)
+    {
+        const double sway = std::sin (6.2831853 * 0.07 * t + (double) (seedBase % 1000u) * 0.0063);
+        haloEngine.nudge ((double) drift * 0.45 * sway * (double) n * source->sampleRate() / hostRate);
+    }
+
+    haloEngine.setParameters ({ 0.0f, haloRatio(), true });
+    std::fill_n (haloLeft.data(), n, 0.0f);
+    std::fill_n (haloRight.data(), n, 0.0f);
+    haloEngine.process (haloLeft.data(), haloRight.data(), n);
+
+    if (! preShifter)
+    {
+        // Bloom, formant mode: keep the halo's vowel as the note keeps its own.
+        shifter.setPeriod (periodFor (haloEngine, haloRatio()));
+        shifter.setRatio (formantRatioNow() / std::exp2 ((float) voiceSettings.haloOctave));
+        shifter.process (haloLeft.data(), haloRight.data(), haloLeft.data(), haloRight.data(), n);
+    }
+
+    const float g0 = haloGain, dg = (targetGain - g0) / (float) n;
+    for (int s = 0; s < n; ++s)
+    {
+        const float g = g0 + dg * (float) (s + 1);
+        mixLeft[(size_t) s] += haloLeft[(size_t) s] * g;
+        mixRight[(size_t) s] += haloRight[(size_t) s] * g;
+    }
+    haloGain = targetGain;
+}
+
+void SingVoice::finishSubBlock (float* left, float* right, int n) noexcept
+{
+    ensemble.set (voiceSettings.ensembleSingers, voiceSettings.ensembleDetune, voiceSettings.ensembleVibrato, voiceSettings.ensembleWidth);
+    ensemble.process (mixLeft.data(), mixRight.data(), n);
+    applyEnvelope (left, right, n);
 }
 
 void SingVoice::setSettings (const VoiceSettings& settings) noexcept
@@ -444,6 +537,8 @@ void SingVoice::stop() noexcept
     bloom.stop();
     bloomNote = false;
     stftNote = false;
+    haloEngine.stop();
+    haloRunning = false;
     source = nullptr;
 }
 
@@ -456,18 +551,24 @@ void SingVoice::setSource (const LoopSource& src) noexcept
         // A Bloom note keeps its old loop if the new one has no Bloom analysis (the engine
         // was switched while it played); isUsing keeps that loop alive until the note ends.
         bloom.setSource (src);
+        if (haloRunning)
+            haloEngine.setSource (src);
         return;
     }
     source = &src;
     for (auto& c : copies)
         if (c.running)
             c.engine.setSource (src);
+    if (haloRunning)
+        haloEngine.setSource (src);
 }
 
 bool SingVoice::isUsing (const LoopSource& src) const noexcept
 {
     if (! active)
         return false;
+    if (haloRunning && haloEngine.isUsing (src))
+        return true;
     if (bloomNote)
         return bloom.isUsing (src);
     for (const auto& c : copies)
@@ -563,11 +664,14 @@ void SingVoice::renderSubBlock (float* left, float* right, int n) noexcept
             renderBloomVarispeed (n);
         if (stftNote)
         {
+            renderHalo (n, true);
             const auto shift = stftShift();
             stft.setShift (shift.factor, shift.envelope, shift.envelopeRatio);
             stft.process (mixLeft.data(), mixRight.data(), mixLeft.data(), mixRight.data(), n);
         }
-        applyEnvelope (left, right, n);
+        else
+            renderHalo (n, false);
+        finishSubBlock (left, right, n);
         return;
     }
 
@@ -618,6 +722,8 @@ void SingVoice::renderSubBlock (float* left, float* right, int n) noexcept
         }
     }
 
+    renderHalo (n, true);
+
     if (stftNote)
     {
         const auto shift = stftShift();
@@ -632,7 +738,7 @@ void SingVoice::renderSubBlock (float* left, float* right, int n) noexcept
         shifter.process (mixLeft.data(), mixRight.data(), mixLeft.data(), mixRight.data(), n);
     }
 
-    applyEnvelope (left, right, n);
+    finishSubBlock (left, right, n);
 }
 
 void SingVoice::renderBloomVarispeed (int n) noexcept

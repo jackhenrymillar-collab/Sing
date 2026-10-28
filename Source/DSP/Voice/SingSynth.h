@@ -8,10 +8,34 @@
 namespace sing
 {
 
+// The Harmoniser: extra notes in key with every key played.
+struct HarmonySettings
+{
+    bool on = false;
+    int key = 0;         // 0 C to 11 B
+    int scale = 0;       // see harmonyScales
+    int above = 0;       // 0 off, 1 third, 2 fourth, 3 fifth, 4 sixth, 5 octave: scale steps up
+    int below = 0;       // the same, down
+    float level = 0.7f;  // the harmony notes' velocity, as a share of the played note's
+};
+
+// The scales, as semitones from the key: major, natural minor, Dorian, Mixolydian, Lydian,
+// major pentatonic.
+constexpr int numHarmonyScales = 6;
+constexpr int harmonyScaleSize[numHarmonyScales] { 7, 7, 7, 7, 7, 5 };
+constexpr int harmonyScales[numHarmonyScales][7] { { 0, 2, 4, 5, 7, 9, 11 }, { 0, 2, 3, 5, 7, 8, 10 }, { 0, 2, 3, 5, 7, 9, 10 },
+                                                    { 0, 2, 4, 5, 7, 9, 10 }, { 0, 2, 4, 6, 7, 9, 11 }, { 0, 2, 4, 7, 9, 0, 0 } };
+
+// The harmony note for a played note: the note snapped to the nearest step of the scale,
+// then interval steps up (or down, when up is false) that scale. interval as in
+// HarmonySettings::above; 0 returns the note itself.
+int harmonyNote (int note, int key, int scale, int interval, bool up) noexcept;
+
 struct SynthSettings
 {
     VoiceSettings voice;
     int polyphony = 8;   // the Voices setting, 1 to 16
+    HarmonySettings harmony;
 };
 
 // The polyphonic part of Sing: MIDI notes in, mixed voices out.
@@ -92,9 +116,12 @@ public:
 
 private:
     SingVoice* findVoiceToStart() noexcept;
+    void startVoice (int note, int playedKey, float velocity, bool glide) noexcept;
 
     std::array<SingVoice, (size_t) voicePool> voices;
     std::array<bool, (size_t) voicePool> sustained {};
+    // The key that started each voice: a harmony note's played key is not its own note.
+    std::array<int, (size_t) voicePool> playedKeys {};
     SynthSettings settings;
     const LoopSource* source = nullptr;
     std::array<const LoopSource*, (size_t) maxOldSources> oldSources {};

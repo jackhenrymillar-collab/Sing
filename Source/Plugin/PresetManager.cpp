@@ -1,6 +1,8 @@
 #include "PresetManager.h"
 #include "Parameters.h"
 
+#include <algorithm>
+
 namespace sing
 {
 
@@ -20,6 +22,16 @@ namespace
         float air, space;
         // Movement (presets that leave it out stay still).
         float orbitSpread = 0.0f, orbitFormant = 0.0f, wander = 0.0f;
+        // The choir modules (presets that leave them out keep them off).
+        struct Choir
+        {
+            int singers = 0;                                               // Ensemble: 0 off, else 2 to 8
+            float detune = 10.0f, vibrato = 40.0f, width = 70.0f;
+            float halo = 0.0f, haloDrift = 20.0f;                          // Halo: level 0 off
+            int haloOctave = 1;                                            // 0 down, 1 same, 2 up
+            float vowelDepth = 0.0f, vowel = 50.0f, breathe = 25.0f;       // Vowel: depth 0 off
+            int harmonyAbove = 0, harmonyBelow = 0, harmonyKey = 0, harmonyScale = 0;   // Harmoniser: both Off is off
+        } choir {};
     };
 
     // The four presets from the mockup, two for Bloom, one that moves, and ten on voices that change
@@ -71,6 +83,18 @@ namespace
         { "Vibes After Dark", PlaceholderVowel::vibraphone,   0.01f, 8.0f,  30.0f, 30.0f,  0.0f,    0.0f, 70.0f, 30.0f, 2,  0,      0.0f, 55.0f },
         { "Harp Echoes",     PlaceholderVowel::harp,          0.01f, 8.0f,  30.0f, 35.0f,  0.0f,    0.0f, 95.0f, 20.0f, 0,  0,      0.0f, 55.0f },
         { "Musette",         PlaceholderVowel::accordion,     1.0f,  8.0f,  20.0f, 30.0f,  0.0f,    5.0f, 90.0f, 25.0f, 2,  0,      0.0f, 45.0f },
+        // The choir modules: a crowd of singers on one note, a frozen halo under it, a vowel laid
+        // over a hum, harmony notes that follow the key, and all of them at once.
+        { "Eight Voices",   PlaceholderVowel::ooh,           2.5f,  9.0f,  50.0f, 30.0f,  0.0f,   30.0f, 40.0f, 28.0f, 0,  0,      0.0f, 55.0f,   0.0f,  0.0f,  0.0f,
+          { .singers = 8, .detune = 14.0f, .vibrato = 45.0f, .width = 90.0f } },
+        { "Low Halo",       PlaceholderVowel::ah,            3.0f, 11.0f,  80.0f, 45.0f, -2.0f,   22.0f, 36.0f, 35.0f, 0,  1,      0.0f, 70.0f,   0.0f,  0.0f,  0.0f,
+          { .halo = 60.0f, .haloDrift = 30.0f, .haloOctave = 0 } },
+        { "Mouth Music",    PlaceholderVowel::overtoneDrone, 2.0f,  8.0f,  25.0f, 25.0f,  0.0f,    5.0f, 90.0f, 25.0f, 2,  0,      0.0f, 40.0f,   0.0f,  0.0f,  0.0f,
+          { .vowelDepth = 80.0f, .vowel = 40.0f, .breathe = 60.0f } },
+        { "Minor Thirds",   PlaceholderVowel::swellingAlto,  2.0f,  8.0f,  25.0f, 30.0f,  0.0f,    5.0f, 85.0f, 25.0f, 2,  0,      0.0f, 50.0f,   0.0f,  0.0f,  0.0f,
+          { .harmonyAbove = 1, .harmonyKey = 9, .harmonyScale = 1 } },
+        { "Whole Cathedral", PlaceholderVowel::smallChoir,   3.0f, 12.0f,  70.0f, 55.0f, -1.0f,   15.0f, 70.0f, 30.0f, 0,  1,      0.0f, 75.0f,   0.0f,  0.0f, 25.0f,
+          { .singers = 5, .detune = 10.0f, .halo = 35.0f, .harmonyBelow = 5 } },
     };
 }
 
@@ -104,7 +128,25 @@ PresetManager::PresetManager (juce::AudioProcessorValueTreeState& s,
                      { ParamID::space,      f.space },
                      { ParamID::orbitSpread,  f.orbitSpread },
                      { ParamID::orbitFormant, f.orbitFormant },
-                     { ParamID::wander,       f.wander } };
+                     { ParamID::wander,       f.wander },
+                     { ParamID::ensembleOn,      f.choir.singers >= 2 ? 1.0f : 0.0f },
+                     { ParamID::ensembleSingers, static_cast<float> (std::max (2, f.choir.singers)) },
+                     { ParamID::ensembleDetune,  f.choir.detune },
+                     { ParamID::ensembleVibrato, f.choir.vibrato },
+                     { ParamID::ensembleWidth,   f.choir.width },
+                     { ParamID::haloOn,          f.choir.halo > 0.0f ? 1.0f : 0.0f },
+                     { ParamID::haloLevel,       f.choir.halo > 0.0f ? f.choir.halo : 50.0f },
+                     { ParamID::haloDrift,       f.choir.haloDrift },
+                     { ParamID::haloOctave,      static_cast<float> (f.choir.haloOctave) },
+                     { ParamID::vowelOn,         f.choir.vowelDepth > 0.0f ? 1.0f : 0.0f },
+                     { ParamID::vowelShape,      f.choir.vowel },
+                     { ParamID::vowelDepth,      f.choir.vowelDepth > 0.0f ? f.choir.vowelDepth : 60.0f },
+                     { ParamID::vowelBreathe,    f.choir.breathe },
+                     { ParamID::harmonyOn,       f.choir.harmonyAbove > 0 || f.choir.harmonyBelow > 0 ? 1.0f : 0.0f },
+                     { ParamID::harmonyKey,      static_cast<float> (f.choir.harmonyKey) },
+                     { ParamID::harmonyScale,    static_cast<float> (f.choir.harmonyScale) },
+                     { ParamID::harmonyAbove,    static_cast<float> (f.choir.harmonyAbove) },
+                     { ParamID::harmonyBelow,    static_cast<float> (f.choir.harmonyBelow) } };
         upgradeOldSpace (p.values);   // the table holds the old one-knob Space
         factory.push_back (std::move (p));
     }

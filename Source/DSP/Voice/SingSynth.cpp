@@ -99,27 +99,76 @@ void SingSynth::noteOn (int note, float velocity) noexcept
         return;
     }
 
-    // A key played again while still held (or sustained) starts a fresh note.
+    // A key played again while still held (or sustained) starts a fresh note, with its harmony.
     for (int i = 0; i < voicePool; ++i)
-        if (voices[(size_t) i].isActive() && voices[(size_t) i].getNote() == note && ! voices[(size_t) i].isReleased())
+        if (voices[(size_t) i].isActive() && playedKeys[(size_t) i] == note && ! voices[(size_t) i].isReleased())
         {
             voices[(size_t) i].release();
             sustained[(size_t) i] = false;
         }
 
+    startVoice (note, note, velocity, true);
+
+    // The Harmoniser's notes, in key, above and below.
+    const auto& h = settings.harmony;
+    if (h.on)
+        for (const bool up : { true, false })
+        {
+            const int interval = up ? h.above : h.below;
+            if (interval <= 0)
+                continue;
+            const int harmony = harmonyNote (note, h.key, h.scale, interval, up);
+            if (harmony != note && harmony >= 0 && harmony < 128)
+                startVoice (harmony, note, velocity * h.level, false);
+        }
+
+    lastNoteSemitones = (float) note - hzToMidi (settings.voice.rootHz);
+    hasLastNote = true;
+}
+
+void SingSynth::startVoice (int note, int playedKey, float velocity, bool glide) noexcept
+{
     auto* v = findVoiceToStart();
     const auto index = (size_t) (v - voices.data());
-    const float semitones = (float) note - hzToMidi (settings.voice.rootHz);
-
     v->setMoveClock (moveCycles);
-    v->start (*source, note, velocity, settings.voice, hasLastNote,
+    v->start (*source, note, velocity, settings.voice, glide && hasLastNote,
               lastNoteSemitones + settings.voice.pitchBendSemitones, nextSeed);
     v->setStartOrder (nextOrder++);
     sustained[index] = false;
-
+    playedKeys[index] = playedKey;
     nextSeed = nextSeed * 1664525u + 1013904223u;
-    lastNoteSemitones = semitones;
-    hasLastNote = true;
+}
+
+int harmonyNote (int note, int key, int scale, int interval, bool up) noexcept
+{
+    if (interval <= 0)
+        return note;
+    scale = std::clamp (scale, 0, numHarmonyScales - 1);
+    const int size = harmonyScaleSize[scale];
+    const int* steps = harmonyScales[scale];
+    key = ((key % 12) + 12) % 12;
+    const int pc = (((note - key) % 12) + 12) % 12;
+
+    // The nearest step of the scale (the lower one when two are as near).
+    int nearest = 0, best = 99;
+    for (int i = 0; i < size; ++i)
+    {
+        int d = std::abs (pc - steps[i]);
+        d = std::min (d, 12 - d);
+        if (d < best)
+        {
+            best = d;
+            nearest = i;
+        }
+    }
+    // Steps up or down the scale: a third is two steps, a fourth three, and so on; an
+    // octave is the whole scale.
+    const int stepCount = interval >= 5 ? size : interval + 1;
+    const int index = nearest + (up ? stepCount : -stepCount);
+    const int octave = index >= 0 ? index / size : -((-index + size - 1) / size);
+    const int degree = index - octave * size;
+    // Both the snapped note and the harmony are measured from the key below the note.
+    return note - pc + steps[degree] + 12 * octave;
 }
 
 void SingSynth::noteOff (int note) noexcept
@@ -127,7 +176,7 @@ void SingSynth::noteOff (int note) noexcept
     for (int i = 0; i < voicePool; ++i)
     {
         auto& v = voices[(size_t) i];
-        if (! v.isActive() || v.getNote() != note || v.isReleased())
+        if (! v.isActive() || playedKeys[(size_t) i] != note || v.isReleased())
             continue;
         if (sustainDown)
             sustained[(size_t) i] = true;
