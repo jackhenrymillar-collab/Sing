@@ -74,6 +74,27 @@ juce::StringArray moveShapeNames() { return { "Drift", "Wave", "Breath" }; }
 
 juce::StringArray shimmerIntervalNames() { return { "Octave", "Fifth" }; }
 
+juce::StringArray haloOctaveNames() { return { "Down", "Same", "Up" }; }
+
+juce::StringArray harmonyKeyNames() { return { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" }; }
+
+juce::StringArray harmonyScaleNames() { return { "Major", "Minor", "Dorian", "Mixolydian", "Lydian", "Pentatonic" }; }
+
+juce::StringArray harmonyIntervalNames() { return { "Off", "3rd", "4th", "5th", "6th", "Octave" }; }
+
+juce::String formatVowel (float v)
+{
+    static const char* names[] = { "OOH", "OH", "AH", "EH", "EE" };
+    const float p = juce::jlimit (0.0f, 4.0f, v * 0.04f);
+    const int a = (int) std::floor (p + 1.0e-4f), b = std::min (4, a + 1);
+    const float f = p - (float) a;
+    if (f < 0.2f || a == b)
+        return names[a];
+    if (f > 0.8f)
+        return names[b];
+    return juce::String (names[a]) + juce::String::charToString (juce::juce_wchar (0x2192)) + names[b];
+}
+
 namespace
 {
     constexpr float kMoveBars[] = { 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 16.0f, 32.0f };
@@ -201,6 +222,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::shimmerAmount, v }, "Shimmer Amount", Range { 0.0f, 100.0f, 0.1f }, 40.0f, withText (formatPercent)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::shimmerRise, v }, "Shimmer Rise", Range { 0.0f, 100.0f, 0.1f }, 50.0f, withText (formatPercent)));
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::shimmerInterval, v }, "Shimmer Interval", shimmerIntervalNames(), 0));
+    // Ensemble, Halo, Vowel and Harmoniser start off.
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::ensembleOn, v }, "Ensemble On", false));
+    layout.add (std::make_unique<AudioParameterInt> (ParameterID { ParamID::ensembleSingers, v }, "Ensemble Singers", 2, 8, 4));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::ensembleDetune, v }, "Ensemble Detune", Range { 0.0f, 30.0f, 0.1f }, 10.0f, withText (formatCents)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::ensembleVibrato, v }, "Ensemble Vibrato", Range { 0.0f, 100.0f, 0.1f }, 40.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::ensembleWidth, v }, "Ensemble Width", Range { 0.0f, 100.0f, 0.1f }, 70.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::haloOn, v }, "Halo On", false));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::haloLevel, v }, "Halo Level", Range { 0.0f, 100.0f, 0.1f }, 50.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::haloDrift, v }, "Halo Drift", Range { 0.0f, 100.0f, 0.1f }, 20.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::haloOctave, v }, "Halo Octave", haloOctaveNames(), 1));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::vowelOn, v }, "Vowel On", false));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::vowelShape, v }, "Vowel", Range { 0.0f, 100.0f, 0.1f }, 50.0f, withText (formatVowel)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::vowelDepth, v }, "Vowel Depth", Range { 0.0f, 100.0f, 0.1f }, 60.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::vowelBreathe, v }, "Vowel Breathe", Range { 0.0f, 100.0f, 0.1f }, 25.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::harmonyOn, v }, "Harmoniser On", false));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::harmonyKey, v }, "Harmoniser Key", harmonyKeyNames(), 0));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::harmonyScale, v }, "Harmoniser Scale", harmonyScaleNames(), 0));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::harmonyAbove, v }, "Harmoniser Above", harmonyIntervalNames(), 1));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::harmonyBelow, v }, "Harmoniser Below", harmonyIntervalNames(), 0));
     // Also the host's bypass switch (see SingProcessor::getBypassParameter). Clicking the evening star toggles it.
     // Movement. Every orbit starts at 0, so sessions from before it sound the same.
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::orbitStretch, v }, "Stretch Orbit", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatOrbit)));

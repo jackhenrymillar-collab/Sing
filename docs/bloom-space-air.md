@@ -99,12 +99,13 @@ blocks):
 
 ### The modules
 
-Every module sits on the main panel under the knobs, two rows of tiles, each with an on/off
+Every module sits on the main panel under the knobs, three rows of tiles, each with an on/off
 light (Window is always on), its controls, and a small moving picture of what it does (drawn
 from the module's settings, and livelier while notes sound). Most shape Bloom only and dim
-while Grain plays; Binaural, Tape, Shimmer and Space work in both engines. Seven columns:
-the first row Window to Filter, the second Compressor, Octaves (two wide), Binaural, Tape,
-Shimmer and Space.
+while Grain plays; Binaural, Tape, Shimmer, Ensemble, Halo, Vowel, Harmoniser and Space work
+in both engines. Six columns: the first row Window to Harmonics, the second Filter,
+Compressor, Octaves (two wide), Binaural and Tape, the third Shimmer, Ensemble, Halo, Vowel,
+Harmoniser and Space.
 
 | Module | Parameters | Range | What it does |
 | --- | --- | --- | --- |
@@ -120,6 +121,10 @@ Shimmer and Space.
 | Binaural | `binauralon`, `binauralrate`, `binauralamount` | 0.1 to 30 Hz, 0 to 100 % | Shifts the left channel up and the right down by half the rate (single-sideband, via two IIR all-pass Hilbert pairs), so the ears hear a beat at the rate. Runs on the whole instrument before Air and Space, in both engines. Best on headphones. |
 | Tape | `tapeon`, `tapewow`, `tapeflutter`, `tapedrive`, `tapeage` | 0 to 100 % each (defaults 30, 20, 35, 40) | Wow: a slow, slightly wandering pitch sway (about 0.5 Hz, up to about 30 cents). Flutter: a quick shiver (7 and 11 Hz, up to about 12 cents). Both are one modulated delay shared by the two channels, so the image stays put. Drive: up to about +18 dB into a tanh curve, level made up for a voice around -12 dBFS (third harmonic about -21 dB at the top). Age: a 12 dB per octave low-pass from 22 kHz down to 2.5 kHz. Runs first, before Binaural, Air and Space. While on it delays the sound by 12 ms; switching fades over about 50 ms. |
 | Shimmer | `shimmeron`, `shimmeramount`, `shimmerrise`, `shimmerinterval` | 0 to 100 %, 0 to 100 %, Octave / Fifth | Inside Space: the reverb's send (Amount, squared) and its own tail (Rise) go through a 200 Hz to 6 kHz band-pass and Sing's STFT pitch shifter (an octave or a fifth up) and back into the reverb, so each pass climbs a step and the halo grows above held notes. Needs Space above 0 to be heard. Rise is scaled down for Decays past 4 s and the loop is soft-limited, so even Rise 100 % at a 60 s Decay fades away. |
+| Ensemble | `ensembleon`, `ensemblesingers`, `ensembledetune`, `ensemblevibrato`, `ensemblewidth` | 2 to 8 (default 4); 0 to 30 cents (10); 0 to 100 % (40, 70) | A few singers taking each note (`Voice/Ensemble.h`, inside every note, after its copies and shifter, before its envelope). Each singer is the note through its own short delay (12 ms) that wanders slowly (two sines, 0.12 to 0.75 Hz, Detune setting its reach) and trembles at their own vibrato (4.7 to 6.3 Hz, up to 30 cents, arriving over 0.3 to 0.9 s), standing at their own place across Width, equal power. The singers replace the note, summed at 1/sqrt(N), so the level holds. Each note's singers are seeded from the note. Written from the three-line string-machine ensemble idea; no noise, nothing licensed. |
+| Halo | `haloon`, `halolevel`, `halodrift`, `halooctave` | 0 to 100 % (50, 20); Down / Same / Up | A frozen copy of the voice held under every note: a second granular engine at speed 0, started where the note began (Wander's offset included), at 1.4 x Level (a frozen engine plays quieter than a moving one), at the note's pitch or an octave either way. Drift sways the held moment back and forth through the voice (0.07 Hz, up to about a second). In Grain it is mixed before the formant or STFT shifter; in Bloom it goes through the note's own formant shifter (or, in STFT mode, is mixed before the STFT) so its vowel matches. |
+| Vowel | `vowelon`, `vowel`, `voweldepth`, `vowelbreathe` | OOH to EE (default AH, 50); 0 to 100 % (60, 25) | A vowel laid over the whole instrument (`Effects/Vowel.h`, before Tape): three parallel band-passes (Q 7) at the first three formants of ooh, oh, ah, eh and ee (Peterson and Barney; Hillenbrand for oh), centres sliding on a log scale between neighbours, gains 1, 0.8 and 0.5. At Depth 100 % the wet is 3.2 x and the dry 0.3 x. Breathe swings the vowel towards its neighbours and back (0.08 to 0.43 Hz, up to 0.7 of a vowel step). Any synth or instrument comes out singing; the mix glides so switching never clicks. |
+| Harmoniser | `harmonyon`, `harmonykey`, `harmonyscale`, `harmonyabove`, `harmonybelow` | C to B; Major, Minor, Dorian, Mixolydian, Lydian, Pentatonic; Off, 3rd, 4th, 5th, 6th, Octave (Above defaults to 3rd) | Every key played also starts harmony notes (`SingSynth`, at 0.7 of the velocity, no glide) the given scale steps above and below, in the key and scale: a 3rd is two scale steps, a 4th three, and so on, an Octave the whole scale, so a third above E in C major is G and above B is D. A played note off the scale snaps to the nearest step first (the lower on a tie). Harmony notes remember the key that started them and end with it. They take voices from the pool like any note, so Polyphony counts them. |
 | Space filter | `spacefilteron`, `spacelow`, `spacehigh` | 20 Hz to 2 kHz, 1 to 20 kHz | A 12 dB per octave low and high cut on the reverb's wet signal only; the dry voice is untouched. Both engines. |
 
 The older modules' switches start on and the new ones start off, so older sessions and
@@ -169,12 +174,13 @@ turned down to 0 the wet fades out over about half a second, then the reverb sto
 Measured decay at 0.25, 0.5 and 1: 4.5 s, 7.8 s and 20 s. Air and Space together use about 5 %
 of a core.
 
-The signal runs synth, then Tape, then Binaural, then Air, then Space (with Shimmer), then
+The signal runs synth (each note: copies, Halo, shifter, Ensemble, envelope; the Harmoniser
+adds notes), then Vowel, then Tape, then Binaural, then Air, then Space (with Shimmer), then
 Output.
 
 ## The panel
 
-The panel is laid out at 1280 x 920 units and scales from 60 % to 140 %. From the top: the
+The panel is laid out at 1280 x 1120 units and scales from 60 % to 140 %. From the top: the
 header (logo, preset, A / B, Save, and the evening star, which is bypass), a small line with the
 voice's name, root and length beside DROP A VOICE, the waveform across the whole width, the loop
 row, the seven knobs, the module tiles (above), and the bottom row.
@@ -191,3 +197,8 @@ With Reduce Motion on, the sky is one still picture.
 Two new factory presets use Bloom: **Bloom Halo** and **Slow Petals**. The four earlier
 presets now set Air and Space too. Air, Space and the engine default to 0 and Grain, so
 sessions and user presets saved before this change sound as they did.
+
+Five presets use the choir modules: **Eight Voices** (Ensemble, eight singers wide apart),
+**Low Halo** (Bloom with a Halo an octave down), **Mouth Music** (Vowel breathing over the
+overtone drone), **Minor Thirds** (Harmoniser, a third above in A minor) and **Whole
+Cathedral** (five singers, a Halo and an octave below, in Bloom).

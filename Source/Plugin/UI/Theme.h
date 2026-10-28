@@ -7,7 +7,7 @@
 namespace sing::ui
 {
 
-inline constexpr float panelWidth = 1280.0f, panelHeight = 920.0f;
+inline constexpr float panelWidth = 1280.0f, panelHeight = 1120.0f;
 
 namespace Colours
 {

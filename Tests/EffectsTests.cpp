@@ -6,6 +6,7 @@
 #include "Effects/Binaural.h"
 #include "Effects/Space.h"
 #include "Effects/Tape.h"
+#include "Effects/Vowel.h"
 
 #include <functional>
 
@@ -439,4 +440,64 @@ TEST_CASE ("Space: Shimmer at the top of Rise and Decay fades away, never runs o
     CHECK (peak < 3.0f);
     CHECK (at (35) < at (20));
     CHECK (at (20) < at (5));
+}
+
+TEST_CASE ("Vowel: off passes the signal untouched; on, the vowel sets where the energy is")
+{
+    // A buzz with every harmonic, so the vowel's resonances have something to pick out.
+    std::vector<float> l (96000), r (96000);
+    for (int i = 0; i < 96000; ++i)
+    {
+        double v = 0.0;
+        for (int h = 1; h <= 40; ++h)
+            v += std::sin (twoPi * 110.0 * h * i / sr) / h;
+        l[(size_t) i] = r[(size_t) i] = (float) (0.3 * v);
+    }
+
+    Vowel off;
+    off.prepare (sr);
+    off.set (false, 0.5f, 1.0f, 0.0f);
+    auto l2 = l, r2 = r;
+    runBlocks (96000, 512, [&] (int i, int n) { off.process (l2.data() + i, r2.data() + i, n); });
+    CHECK (l2 == l);
+    CHECK (r2 == r);
+
+    auto shaped = [&] (float vowel)
+    {
+        Vowel v;
+        v.prepare (sr);
+        v.set (true, vowel, 1.0f, 0.0f);
+        auto a = l, b = r;
+        runBlocks (96000, 512, [&] (int i, int n) { v.process (a.data() + i, b.data() + i, n); });
+        REQUIRE (finite (a));
+        return a;
+    };
+    const auto ooh = shaped (0.0f), ee = shaped (1.0f);
+    // The buzz is harmonic, so the energy in a band is the sum over its harmonics.
+    auto band = [] (const std::vector<float>& x, double lo, double hi)
+    {
+        double sum = 0.0;
+        for (int h = 1; h <= 40; ++h)
+        {
+            const double hz = 110.0 * h;
+            if (hz < lo || hz > hi)
+                continue;
+            double re = 0.0, im = 0.0;
+            for (int i = 24000; i < 96000; ++i)
+            {
+                const double w = twoPi * hz * i / sr;
+                re += x[(size_t) i] * std::cos (w);
+                im += x[(size_t) i] * std::sin (w);
+            }
+            sum += re * re + im * im;
+        }
+        return 10.0 * std::log10 (sum + 1.0e-12);
+    };
+    // "ooh" has its second formant around 870 Hz where "ee" has nothing; "ee" has its third
+    // around 3 kHz where "ooh" has nothing.
+    const double oohMid = band (ooh, 700.0, 1000.0), eeMid = band (ee, 700.0, 1000.0);
+    const double oohTop = band (ooh, 2800.0, 3300.0), eeTop = band (ee, 2800.0, 3300.0);
+    INFO ("700 to 1000 Hz: ooh " << oohMid << " dB, ee " << eeMid << " dB; 2.8 to 3.3 kHz: ooh " << oohTop << ", ee " << eeTop);
+    CHECK (oohMid > eeMid + 6.0);
+    CHECK (eeTop > oohTop + 4.0);
 }

@@ -12,9 +12,10 @@ namespace sing::ui
 
 // The modules on the main panel: one tile per module, each with its on/off light, its controls
 // and a small moving picture of what it does. Most shape Bloom only and rest while Grain plays;
-// Binaural, Tape, Shimmer and Space work in both engines. (The Space tile is ModuleKind::spaceFilter, its
-// name from when it held only the reverb's cuts.)
-enum class ModuleKind { window, onsets, shift, smear, tone, harmonics, filter, compressor, octaves, binaural, tape, shimmer, spaceFilter };
+// Binaural, Tape, Shimmer, Ensemble, Halo, Vowel, Harmoniser and Space work in both engines. (The
+// Space tile is ModuleKind::spaceFilter, its name from when it held only the reverb's cuts.)
+enum class ModuleKind { window, onsets, shift, smear, tone, harmonics, filter, compressor, octaves, binaural, tape, shimmer,
+                        ensemble, halo, vowel, harmoniser, spaceFilter };
 
 // Every module's settings, in parameter units, for the pictures.
 struct ModuleSettings
@@ -39,9 +40,19 @@ struct ModuleSettings
     float tapeWow = 30.0f, tapeFlutter = 20.0f, tapeDrive = 35.0f, tapeAge = 40.0f;   // percent
     float shimmerAmount = 40.0f, shimmerRise = 50.0f;                                  // percent
     int shimmerInterval = 0;         // 0 an octave up, 1 a fifth up
+    int ensembleSingers = 4;
+    float ensembleDetune = 10.0f;    // cents
+    float ensembleVibrato = 40.0f, ensembleWidth = 70.0f;   // percent
+    float haloLevel = 50.0f, haloDrift = 20.0f;             // percent
+    int haloOctave = 1;              // 0 down, 1 same, 2 up
+    float vowel = 50.0f;             // 0 ooh, 25 oh, 50 ah, 75 eh, 100 ee
+    float vowelDepth = 60.0f, vowelBreathe = 25.0f;        // percent
+    int harmonyKey = 0, harmonyScale = 0;                   // C; major
+    int harmonyAbove = 1, harmonyBelow = 0;                 // 0 off, 1 3rd, 2 4th, 3 5th, 4 6th, 5 octave
     bool onsetsOn = true, shiftOn = true, smearOn = true, toneOn = true, harmonicsOn = false, filterOn = false;
     bool compressorOn = false, octavesOn = false, binauralOn = false, spaceFilterOn = false;
     bool tapeOn = false, shimmerOn = false;
+    bool ensembleOn = false, haloOn = false, vowelOn = false, harmonyOn = false;
 
     bool isOn (ModuleKind) const noexcept;
 };
@@ -79,6 +90,11 @@ public:
 
 private:
     juce::Rectangle<float> visualArea() const;
+    bool isCompact() const noexcept
+    {
+        return moduleKind == ModuleKind::spaceFilter || moduleKind == ModuleKind::tape
+            || moduleKind == ModuleKind::ensemble || moduleKind == ModuleKind::harmoniser;
+    }
 
     ModuleKind moduleKind;
     juce::String name;
@@ -111,9 +127,9 @@ public:
     void resized() override;
 
     static constexpr float headingHeight = 28.0f;
-    static constexpr int columns = 7;
+    static constexpr int columns = 6, rows = 3;
     static constexpr float gap = 12.0f;
-    static float preferredHeight() noexcept { return headingHeight + 8.0f + 2.0f * ModuleTile::height + gap; }
+    static float preferredHeight() noexcept { return headingHeight + 8.0f + (float) rows * ModuleTile::height + (float) (rows - 1) * gap; }
 
 private:
     ModuleSettings readSettings() const;
@@ -126,6 +142,8 @@ private:
     std::unique_ptr<juce::ParameterAttachment> slopeAttachment;
     std::array<PillToggle*, 2> intervalButtons {};
     std::unique_ptr<juce::ParameterAttachment> intervalAttachment;
+    std::array<PillToggle*, 3> haloOctaveButtons {};
+    std::unique_ptr<juce::ParameterAttachment> haloOctaveAttachment;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;

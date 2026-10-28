@@ -755,11 +755,11 @@ void SingPanel::resized()
         knobs[static_cast<size_t> (i)].setBounds (
             juce::Rectangle<float> (left + static_cast<float> (i) * (knobW + 8.0f), 290.0f - Knob::topMargin, knobW, Knob::height).toNearestInt());
 
-    // Every module, in two rows.
+    // Every module, in three rows.
     modules.setBounds (juce::Rectangle<float> (left, 430.0f, inner, ModulesPanel::preferredHeight()).toNearestInt());
 
     // Bottom row.
-    const float bottomY = 866.0f;
+    const float bottomY = ui::panelHeight - 54.0f;
     holdButton.setBounds (juce::Rectangle<float> (left, bottomY, holdButton.preferredWidth(), 40.0f).toNearestInt());
     float ex = left + holdButton.preferredWidth() + 22.0f;
     for (auto& b : engineButtons)
