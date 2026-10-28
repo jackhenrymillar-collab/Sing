@@ -28,7 +28,31 @@ enum class PlaceholderVowel
     highEe,         // a light, high "ee" with quick vibrato
     slowWah,        // "ooh" and "ah" in turn, opening and closing like a slow wah
     overtoneDrone,  // a throat-sung drone whose whistling overtone sweeps up and down
-    fallingSigh     // an "ah" that sighs down a tone, softening as it falls
+    fallingSigh,    // an "ah" that sighs down a tone, softening as it falls
+
+    // Synths (PlaceholderSources.cpp): a waveform whose filter or shape moves.
+    sweepingSaw,    // three detuned saws, a ladder filter opening and closing
+    pwmStrings,     // a string machine of slowly sweeping pulse waves
+    morphPad,       // triangle to saw to square as the filter opens
+    wobbleBass,     // a resonant filter wobbled faster and faster
+    syncSweep,      // a bright peak riding up and down the harmonics, like hard sync
+    supersawRise,   // seven saws spreading wider as the filter climbs
+    fmMorph,        // two-operator FM, the index rising and falling
+    wavefoldDrone,  // a sine folded harder and softer
+    flangedSaw,     // a saw through a sweeping flanger
+    talkingSquare,  // a square wave saying "ah ee oo ah"
+
+    // Instruments (PlaceholderSources.cpp).
+    cello,          // two long bows, with vibrato
+    violinSection,  // six violins swelling together
+    flute,          // breathless flute, two swells
+    clarinet,       // low clarinet, a long crescendo
+    frenchHorn,     // horn that opens up at its loudest
+    churchOrgan,    // stops drawn one after another
+    grandPiano,     // middle C, left to ring
+    vibraphone,     // a struck bar with the motor's tremolo slowing
+    harp,           // a string plucked twice
+    accordion       // musette reeds and bellows
 };
 
 constexpr PlaceholderVowel allPlaceholderVowels[] {
@@ -36,7 +60,15 @@ constexpr PlaceholderVowel allPlaceholderVowels[] {
     PlaceholderVowel::openingOoh, PlaceholderVowel::risingEe, PlaceholderVowel::swellingAlto,
     PlaceholderVowel::wakingAh, PlaceholderVowel::smallChoir, PlaceholderVowel::lowOm,
     PlaceholderVowel::highEe, PlaceholderVowel::slowWah, PlaceholderVowel::overtoneDrone,
-    PlaceholderVowel::fallingSigh
+    PlaceholderVowel::fallingSigh,
+    PlaceholderVowel::sweepingSaw, PlaceholderVowel::pwmStrings, PlaceholderVowel::morphPad,
+    PlaceholderVowel::wobbleBass, PlaceholderVowel::syncSweep, PlaceholderVowel::supersawRise,
+    PlaceholderVowel::fmMorph, PlaceholderVowel::wavefoldDrone, PlaceholderVowel::flangedSaw,
+    PlaceholderVowel::talkingSquare,
+    PlaceholderVowel::cello, PlaceholderVowel::violinSection, PlaceholderVowel::flute,
+    PlaceholderVowel::clarinet, PlaceholderVowel::frenchHorn, PlaceholderVowel::churchOrgan,
+    PlaceholderVowel::grandPiano, PlaceholderVowel::vibraphone, PlaceholderVowel::harp,
+    PlaceholderVowel::accordion
 };
 
 struct PlaceholderVoice
@@ -46,7 +78,11 @@ struct PlaceholderVoice
     float rootHz = 0.0f;          // 0 for breath
 };
 
-// How long the factory copy of each voice is: 5 s for the first four, 8 s for the ones that move.
+// The synths and instruments, made in PlaceholderSources.cpp. Written for 8 s, like the moving voices.
+bool isPlaceholderSource (PlaceholderVowel vowel);
+PlaceholderVoice makePlaceholderSource (PlaceholderVowel vowel, double sampleRate, float seconds);
+
+// How long the factory copy of each voice is: 5 s for the first four, 8 s for the rest.
 float placeholderSeconds (PlaceholderVowel vowel);
 
 // The moving voices are written for 8 s and squeezed or stretched to fit other lengths.

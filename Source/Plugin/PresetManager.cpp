@@ -48,6 +48,29 @@ namespace
         { "Tidal Wah",      PlaceholderVowel::slowWah,       1.5f,  8.0f,  15.0f, 30.0f,  0.0f,   12.5f, 75.0f, 20.0f, 0,  0,      0.0f, 45.0f },
         { "Throat Song",    PlaceholderVowel::overtoneDrone, 2.0f,  9.0f,  25.0f, 25.0f,  0.0f,    5.0f, 90.0f, 25.0f, 2,  0,      0.0f, 50.0f },
         { "Evening Sigh",   PlaceholderVowel::fallingSigh,   3.5f, 12.0f,  40.0f, 45.0f,  0.0f,   40.0f, 50.0f, 35.0f, 0,  1,      0.0f, 70.0f,   0.0f, 20.0f, 30.0f },
+        // Synths: the filter or the waveshape moves, so gentle Stretch lets the sweep be heard.
+        //  name              voice                          attack release stretch spread formant  start length fade  dir engine air    space  orbit spread/formant, wander
+        { "Filter Tide",     PlaceholderVowel::sweepingSaw,   1.5f,  8.0f,  25.0f, 40.0f,  0.0f,    2.0f, 96.0f, 20.0f, 2,  0,      0.0f, 45.0f },
+        { "String Machine",  PlaceholderVowel::pwmStrings,    2.0f,  9.0f,  20.0f, 50.0f,  0.0f,   15.0f, 75.0f, 30.0f, 0,  0,      0.0f, 55.0f },
+        { "Shape Shifter",   PlaceholderVowel::morphPad,      2.5f, 10.0f,  35.0f, 45.0f,  0.0f,    5.0f, 90.0f, 25.0f, 2,  1,      0.0f, 60.0f },
+        { "Wobble Floor",    PlaceholderVowel::wobbleBass,    0.2f,  4.0f,  10.0f, 15.0f,  0.0f,    5.0f, 90.0f, 10.0f, 0,  0,      0.0f, 25.0f },
+        { "Sync Glider",     PlaceholderVowel::syncSweep,     1.0f,  8.0f,  25.0f, 35.0f,  0.0f,    2.0f, 96.0f, 20.0f, 2,  0,      0.0f, 45.0f },
+        { "Rising Wall",     PlaceholderVowel::supersawRise,  3.0f, 10.0f,  30.0f, 55.0f,  0.0f,    5.0f, 90.0f, 25.0f, 2,  1,      0.0f, 65.0f },
+        { "FM Tides",        PlaceholderVowel::fmMorph,       1.5f,  9.0f,  30.0f, 35.0f,  0.0f,    2.0f, 96.0f, 20.0f, 2,  0,      0.0f, 50.0f },
+        { "Folded Light",    PlaceholderVowel::wavefoldDrone, 2.0f,  9.0f,  25.0f, 40.0f,  0.0f,    2.0f, 96.0f, 20.0f, 2,  0,      0.0f, 55.0f },
+        { "Jet Stream",      PlaceholderVowel::flangedSaw,    1.5f,  8.0f,  20.0f, 35.0f,  0.0f,    2.0f, 96.0f, 20.0f, 2,  0,      0.0f, 45.0f },
+        { "Robot Choir",     PlaceholderVowel::talkingSquare, 1.0f,  8.0f,  15.0f, 30.0f,  0.0f,    2.0f, 96.0f, 15.0f, 0,  0,      0.0f, 50.0f },
+        // Instruments. The struck and plucked ones start fast so the attack is heard.
+        { "Cello Bows",      PlaceholderVowel::cello,         1.0f,  8.0f,  25.0f, 30.0f,  0.0f,    5.0f, 90.0f, 25.0f, 2,  0,      0.0f, 45.0f },
+        { "Silk Strings",    PlaceholderVowel::violinSection, 2.5f, 10.0f,  40.0f, 50.0f,  0.0f,   15.0f, 70.0f, 30.0f, 0,  1,      0.0f, 65.0f },
+        { "Night Flute",     PlaceholderVowel::flute,         1.0f,  8.0f,  25.0f, 30.0f,  0.0f,    5.0f, 90.0f, 25.0f, 2,  0,      0.0f, 55.0f },
+        { "Low Reed",        PlaceholderVowel::clarinet,      1.0f,  8.0f,  25.0f, 30.0f,  0.0f,    5.0f, 90.0f, 25.0f, 2,  0,      0.0f, 45.0f },
+        { "Horn Swell",      PlaceholderVowel::frenchHorn,    1.5f,  9.0f,  25.0f, 35.0f,  0.0f,    5.0f, 90.0f, 25.0f, 2,  0,      0.0f, 55.0f },
+        { "Organ Stops",     PlaceholderVowel::churchOrgan,   0.5f,  6.0f,  20.0f, 25.0f,  0.0f,    2.0f, 96.0f, 15.0f, 2,  0,      0.0f, 60.0f },
+        { "Piano Haze",      PlaceholderVowel::grandPiano,    0.02f, 10.0f, 45.0f, 40.0f,  0.0f,    0.0f, 60.0f, 30.0f, 0,  1,      0.0f, 65.0f },
+        { "Vibes After Dark", PlaceholderVowel::vibraphone,   0.01f, 8.0f,  30.0f, 30.0f,  0.0f,    0.0f, 70.0f, 30.0f, 2,  0,      0.0f, 55.0f },
+        { "Harp Echoes",     PlaceholderVowel::harp,          0.01f, 8.0f,  30.0f, 35.0f,  0.0f,    0.0f, 95.0f, 20.0f, 0,  0,      0.0f, 55.0f },
+        { "Musette",         PlaceholderVowel::accordion,     1.0f,  8.0f,  20.0f, 30.0f,  0.0f,    5.0f, 90.0f, 25.0f, 2,  0,      0.0f, 45.0f },
     };
 }
 

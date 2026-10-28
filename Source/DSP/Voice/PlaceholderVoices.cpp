@@ -417,11 +417,14 @@ PlaceholderVoice singScore (const Score& score, double sr, int n)
 
 float placeholderSeconds (PlaceholderVowel vowel)
 {
-    return scoreFor (vowel).at != nullptr ? 8.0f : 5.0f;
+    return scoreFor (vowel).at != nullptr || isPlaceholderSource (vowel) ? 8.0f : 5.0f;
 }
 
 PlaceholderVoice makePlaceholderVoice (PlaceholderVowel vowel, double sr, float seconds)
 {
+    if (isPlaceholderSource (vowel))
+        return makePlaceholderSource (vowel, sr, seconds);
+
     const int n = std::max (1, (int) (seconds * sr));
     if (const auto score = scoreFor (vowel); score.at != nullptr)
         return singScore (score, sr, n);

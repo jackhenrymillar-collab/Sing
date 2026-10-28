@@ -33,6 +33,27 @@ namespace
         { PlaceholderVowel::slowWah,       "slowWah",       "Slow Wah",       "\"Ooh\" and \"ah\" in turn, opening and closing (generated)" },
         { PlaceholderVowel::overtoneDrone, "overtoneDrone", "Overtone Drone", "A throat-sung drone with a sweeping, whistled overtone (generated)" },
         { PlaceholderVowel::fallingSigh,   "fallingSigh",   "Falling Sigh",   "An \"ah\" that sighs down a tone, softening as it falls (generated)" },
+        // Synths and instruments.
+        { PlaceholderVowel::sweepingSaw,   "sweepingSaw",   "Sweeping Saw", "Three detuned saws, a filter opening and closing (generated)" },
+        { PlaceholderVowel::pwmStrings,    "pwmStrings",    "PWM Strings", "A string machine of slowly sweeping pulse waves (generated)" },
+        { PlaceholderVowel::morphPad,      "morphPad",      "Morph Pad", "Triangle to saw to square as the filter opens (generated)" },
+        { PlaceholderVowel::wobbleBass,    "wobbleBass",    "Wobble Bass", "A resonant filter wobbling faster and faster (generated)" },
+        { PlaceholderVowel::syncSweep,     "syncSweep",     "Sync Sweep", "A bright peak riding up and down the harmonics (generated)" },
+        { PlaceholderVowel::supersawRise,  "supersawRise",  "Supersaw Rise", "Seven saws spreading as the filter climbs (generated)" },
+        { PlaceholderVowel::fmMorph,       "fmMorph",       "FM Morph", "Two-operator FM, from sine to brassy and back (generated)" },
+        { PlaceholderVowel::wavefoldDrone, "wavefoldDrone", "Wavefold Drone", "A sine folded harder and softer (generated)" },
+        { PlaceholderVowel::flangedSaw,    "flangedSaw",    "Flanged Saw", "A saw through a sweeping flanger (generated)" },
+        { PlaceholderVowel::talkingSquare, "talkingSquare", "Talking Square", "A square wave saying \"ah ee oo ah\" (generated)" },
+        { PlaceholderVowel::cello,         "cello",         "Cello", "Two long bows on a cello, with vibrato (generated)" },
+        { PlaceholderVowel::violinSection, "violinSection", "Violin Section", "Six violins swelling together (generated)" },
+        { PlaceholderVowel::flute,         "flute",         "Flute", "A flute with two swells, no breath (generated)" },
+        { PlaceholderVowel::clarinet,      "clarinet",      "Clarinet", "A low clarinet in a long crescendo (generated)" },
+        { PlaceholderVowel::frenchHorn,    "frenchHorn",    "French Horn", "A horn that opens up at its loudest (generated)" },
+        { PlaceholderVowel::churchOrgan,   "churchOrgan",   "Church Organ", "Organ stops drawn one after another (generated)" },
+        { PlaceholderVowel::grandPiano,    "grandPiano",    "Grand Piano", "Middle C on a piano, left to ring (generated)" },
+        { PlaceholderVowel::vibraphone,    "vibraphone",    "Vibraphone", "A vibraphone bar with the motor's tremolo slowing (generated)" },
+        { PlaceholderVowel::harp,          "harp",          "Harp", "A harp string plucked twice (generated)" },
+        { PlaceholderVowel::accordion,     "accordion",     "Accordion", "Musette reeds and bellows (generated)" },
     };
 
     static_assert (std::size (kPlaceholders) == std::size (allPlaceholderVowels), "every placeholder voice needs a name");
