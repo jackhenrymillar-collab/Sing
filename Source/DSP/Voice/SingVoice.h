@@ -3,6 +3,7 @@
 #include "Bloom/BloomVoice.h"
 #include "Stretch/GranularEngine.h"
 #include "Voice/FormantShifter.h"
+#include "Voice/StftPitchShifter.h"
 #include "Voice/Movement.h"
 
 #include <array>
@@ -11,6 +12,13 @@
 
 namespace sing
 {
+
+// How a note moves to its key.
+enum class PitchMode
+{
+    formant,   // Grain: resample, then FormantShifter. Bloom: its own spectral shift
+    stft,      // Grain or Bloom at the recorded pitch, then StftPitchShifter on the mix
+};
 
 // Settings shared by every note, read from the plugin's parameters once per block.
 struct VoiceSettings
@@ -23,6 +31,9 @@ struct VoiceSettings
     // On: the vowel stays as recorded on every key (formant-preserving pitch shift). Off:
     // plain pitch shifting, so the vowel moves with the key (higher keys sound smaller).
     bool keepVowel = true;
+    // Which pitch shifter notes use. In STFT mode Grain and Bloom both play at the root and
+    // the STFT shifter moves them to the key. A note keeps its mode until it ends.
+    PitchMode pitchMode = PitchMode::formant;
     bool hold = false;
     float glideSeconds = 0.0f;
     float pitchBendSemitones = 0.0f;
@@ -154,7 +165,14 @@ private:
     // One formant shifter for the whole note, after the Spread copies are mixed: the copies
     // share the note's formant setting, so they don't each need one.
     FormantShifter shifter;
+    // The STFT pitch mode's shifter, used instead for notes started in that mode.
+    StftPitchShifter stft;
+    bool stftNote = false;
     void primeShifter() noexcept;
+    void primeBloomShifter() noexcept;
+    float rootPeriod() const noexcept;
+    struct StftShift { float factor = 1.0f; bool envelope = false; float envelopeRatio = 1.0f; };
+    StftShift stftShift() const noexcept;
 
 
     void renderSubBlock (float* left, float* right, int numSamples) noexcept;
@@ -165,7 +183,16 @@ private:
     BloomVoice::Parameters bloomParameters (const std::array<CopyShape, (size_t) maxCopies>& shapes, float norm) const noexcept;
     void startCopy (int index) noexcept;
     float targetSemitones() const noexcept;
+    // A Bloom note's frames are built at this pitch: the key, without glide or bend. Each
+    // frame is long, so a pitch that moves inside the frames would move in steps; the rest
+    // of the pitch (glide, bend) is a smooth change of playback speed on Bloom's output.
+    float bloomAnchorSemitones() const noexcept;
+    float bloomVarispeed() const noexcept;
+    void renderBloomVarispeed (int numSamples) noexcept;
     float pitchRatio (int copy) const noexcept;
+    // The rate a copy's grains play at: the whole pitch in Formant mode, only the copy's
+    // Spread detune in STFT mode (the shifter does the rest).
+    float grainRatio (int copy) const noexcept;
     float periodFor (const GranularEngine& engine, float ratio) const noexcept;
     float formantRatioNow() const noexcept;
     // Works out this sub-block's settings (voiceSettings) from the knobs (baseSettings) and
@@ -179,6 +206,12 @@ private:
     BloomVoice bloom;
     bool bloomNote = false;
     std::vector<float> envelopeGains, mixLeft, mixRight;
+    // Bloom's output waiting to be read at the varispeed rate, and where the reading is.
+    static constexpr float maxVarispeed = 8.0f;
+    std::vector<float> varispeedLeft, varispeedRight;
+    int varispeedFill = 0;
+    double varispeedRead = 1.0;
+    float varispeedRate = 1.0f;
     Envelope envelope;
     VoiceSettings baseSettings;    // as the knobs are set
     VoiceSettings voiceSettings;   // as this sub-block plays them, moved by the orbits

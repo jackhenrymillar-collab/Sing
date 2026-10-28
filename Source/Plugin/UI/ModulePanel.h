@@ -12,9 +12,9 @@ namespace sing::ui
 
 // The modules on the main panel: one tile per module, each with its on/off light, its controls
 // and a small moving picture of what it does. Most shape Bloom only and rest while Grain plays;
-// Binaural and Space work in both engines. (The Space tile is ModuleKind::spaceFilter, its
+// Binaural, Tape, Shimmer and Space work in both engines. (The Space tile is ModuleKind::spaceFilter, its
 // name from when it held only the reverb's cuts.)
-enum class ModuleKind { window, onsets, shift, smear, tone, harmonics, filter, compressor, octaves, binaural, spaceFilter };
+enum class ModuleKind { window, onsets, shift, smear, tone, harmonics, filter, compressor, octaves, binaural, tape, shimmer, spaceFilter };
 
 // Every module's settings, in parameter units, for the pictures.
 struct ModuleSettings
@@ -36,8 +36,12 @@ struct ModuleSettings
     float spaceLowHz = 150.0f, spaceHighHz = 9000.0f;
     float spaceLevel = 0.0f;           // percent: the Space knob
     float spaceDecaySeconds = 6.3f, spaceSize = 67.5f;
+    float tapeWow = 30.0f, tapeFlutter = 20.0f, tapeDrive = 35.0f, tapeAge = 40.0f;   // percent
+    float shimmerAmount = 40.0f, shimmerRise = 50.0f;                                  // percent
+    int shimmerInterval = 0;         // 0 an octave up, 1 a fifth up
     bool onsetsOn = true, shiftOn = true, smearOn = true, toneOn = true, harmonicsOn = false, filterOn = false;
     bool compressorOn = false, octavesOn = false, binauralOn = false, spaceFilterOn = false;
+    bool tapeOn = false, shimmerOn = false;
 
     bool isOn (ModuleKind) const noexcept;
 };
@@ -107,7 +111,7 @@ public:
     void resized() override;
 
     static constexpr float headingHeight = 28.0f;
-    static constexpr int columns = 6;
+    static constexpr int columns = 7;
     static constexpr float gap = 12.0f;
     static float preferredHeight() noexcept { return headingHeight + 8.0f + 2.0f * ModuleTile::height + gap; }
 
@@ -120,6 +124,8 @@ private:
     HeaderButton resetButton { "RESET ALL" };
     std::array<PillToggle*, 3> slopeButtons {};
     std::unique_ptr<juce::ParameterAttachment> slopeAttachment;
+    std::array<PillToggle*, 2> intervalButtons {};
+    std::unique_ptr<juce::ParameterAttachment> intervalAttachment;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;

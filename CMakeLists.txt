@@ -31,10 +31,13 @@ add_library (SingDSP STATIC
     Source/DSP/Effects/Air.cpp
     Source/DSP/Effects/Space.cpp
     Source/DSP/Effects/Binaural.cpp
+    Source/DSP/Effects/Tape.cpp
+    Source/DSP/Effects/Shimmer.cpp
     Source/DSP/Common/RealFFT.cpp
     Source/DSP/Stretch/StretchEngine.cpp
     Source/DSP/Stretch/GranularEngine.cpp
     Source/DSP/Voice/FormantShifter.cpp
+    Source/DSP/Voice/StftPitchShifter.cpp
     Source/DSP/Voice/PlaceholderSources.cpp
     Source/DSP/Voice/PlaceholderVoices.cpp
     Source/DSP/Voice/SingSynth.cpp
@@ -54,6 +57,8 @@ endif()
 if (SING_BUILD_TOOLS)
     add_executable (sing-stretch-render Tools/stretch-render/main.cpp)
     target_link_libraries (sing-stretch-render PRIVATE SingDSP)
+    add_executable (sing-voice-render Tools/voice-render/main.cpp)
+    target_link_libraries (sing-voice-render PRIVATE SingDSP)
 endif()
 
 # ---------------------------------------------------------------------------

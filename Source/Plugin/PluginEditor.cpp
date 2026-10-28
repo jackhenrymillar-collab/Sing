@@ -182,6 +182,21 @@ SingPanel::SingPanel (SingProcessor& p)
             loopFade.setVisible (loops);
             resized();
         });
+    // Keys: how the voice is pitched to each key in Grain.
+    const auto modes = pitchModeNames();
+    for (int i = 0; i < 2; ++i)
+    {
+        auto& b = pitchModeButtons[(size_t) i];
+        b = std::make_unique<PillToggle> (modes[i].toUpperCase(), 36.0f, 11.0f);
+        b->setClickingTogglesState (false);
+        b->onClick = [this, i] { pitchModeAttachment->setValueAsCompleteGesture (static_cast<float> (i)); };
+        addAndMakeVisible (*b);
+    }
+    pitchModeButtons[0]->setTooltip ("Formant: in Grain, keys play the voice faster or slower and the formant shifter keeps the vowel; Bloom shifts in its own spectrum");
+    pitchModeButtons[1]->setTooltip ("STFT: Grain or Bloom plays at the root and every partial is moved to the key in the spectrum, at the voice's own speed");
+    pitchModeAttachment = std::make_unique<juce::ParameterAttachment> (
+        *state.getParameter (ParamID::pitchMode), [this] (float) { updatePitchModeButtons(); });
+
     directionButtons[(size_t) LoopDirection::fromStart]->setTooltip (
         "No loop: each note plays on from Start and holds at the end of the voice. Nothing after Start "
         "blends back in, and Bloom's Window can grow to everything after Start");
@@ -345,6 +360,7 @@ SingPanel::SingPanel (SingProcessor& p)
 
     directionAttachment->sendInitialUpdate();
     engineAttachment->sendInitialUpdate();
+    pitchModeAttachment->sendInitialUpdate();
     shapeAttachment->sendInitialUpdate();
     syncAttachment->sendInitialUpdate();
     bypassAttachment->sendInitialUpdate();
@@ -405,9 +421,22 @@ void SingPanel::setBypassed (bool shouldBypass)
         b->setAlpha (alpha);
     for (auto& b : engineButtons)
         b->setAlpha (alpha);
+    updatePitchModeButtons();
     for (auto& k : knobs)
         k.setAlpha (alpha);
     updateMovementStrip();
+    repaint();
+}
+
+void SingPanel::updatePitchModeButtons()
+{
+    const int mode = juce::roundToInt (processor.getState().getRawParameterValue (ParamID::pitchMode)->load());
+    const float alpha = bypassed ? 0.45f : 1.0f;
+    for (int i = 0; i < 2; ++i)
+    {
+        pitchModeButtons[(size_t) i]->setToggleState (i == mode, juce::dontSendNotification);
+        pitchModeButtons[(size_t) i]->setAlpha (alpha);
+    }
     repaint();
 }
 
@@ -699,6 +728,16 @@ void SingPanel::resized()
         b->setBounds (juce::Rectangle<float> (x, loopY, w, 36.0f).toNearestInt());
         x += w + 6.0f;
     }
+    // Keys: the pitch mode, after a gap.
+    x += 18.0f;
+    keysCaptionX = x;
+    x += trackedTextWidth ("KEYS", Fonts::sans (12.0f, false, 0.24f)) + 10.0f;
+    for (auto& b : pitchModeButtons)
+    {
+        const float w = b->preferredWidth();
+        b->setBounds (juce::Rectangle<float> (x, loopY, w, 36.0f).toNearestInt());
+        x += w + 6.0f;
+    }
     float rx = right;
     for (auto [d, widest] : { std::pair { &loopFade, juce::String ("100%") }, std::pair { &loopLength, juce::String ("60.00 s") },
                               std::pair { &loopStart, juce::String ("60.00 s") }, std::pair { &wanderDragger, juce::String ("100%") } })
@@ -707,7 +746,7 @@ void SingPanel::resized()
             continue;
         const float w = d->preferredWidth (widest);
         d->setBounds (juce::Rectangle<float> (rx - w, loopY, w, 36.0f).toNearestInt());
-        rx -= w + 28.0f;
+        rx -= w + 16.0f;
     }
 
     // Knobs: seven across, dials starting at y = 290.
@@ -775,6 +814,10 @@ void SingPanel::paint (juce::Graphics& g)
     // LOOP caption.
     g.setOpacity (bypassed ? 0.45f : 1.0f);
     drawTrackedText (g, "LOOP", { 40.0f, 240.0f, 80.0f, 36.0f }, Fonts::sans (12.0f, false, 0.24f),
+                     juce::Justification::centredLeft, Colours::soft.withMultipliedAlpha (bypassed ? 0.45f : 1.0f));
+
+    // KEYS caption.
+    drawTrackedText (g, "KEYS", { keysCaptionX, 240.0f, 60.0f, 36.0f }, Fonts::sans (12.0f, false, 0.24f),
                      juce::Justification::centredLeft, Colours::soft.withMultipliedAlpha (bypassed ? 0.45f : 1.0f));
 
     // Hold's glow, like a CSS box-shadow under the lit pill, and the lit engine's.

@@ -76,6 +76,12 @@ private:
     ui::TextDragger loopStart { "Start" }, loopLength { "Length" }, loopFade { "Fade" };
     ui::TextDragger wanderDragger { "Wander" };
 
+    // How keys are pitched (Grain only): Formant or STFT.
+    std::array<std::unique_ptr<ui::PillToggle>, 2> pitchModeButtons;
+    std::unique_ptr<juce::ParameterAttachment> pitchModeAttachment;
+    void updatePitchModeButtons();
+    float keysCaptionX = 0.0f;
+
     // Knobs
     enum KnobId { attack, release, stretch, spread, formant, air, space, numKnobs };
     std::array<ui::Knob, numKnobs> knobs;

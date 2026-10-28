@@ -7,6 +7,7 @@
 #include "Effects/Air.h"
 #include "Effects/Binaural.h"
 #include "Effects/Space.h"
+#include "Effects/Tape.h"
 #include "Voice/SingSynth.h"
 #include "Voice/SourceExchange.h"
 
@@ -130,6 +131,7 @@ private:
     Air air;
     Space space;
     Binaural binaural;
+    Tape tape;
     std::vector<float> monoRight;   // a right channel for the effects when the output is mono
     std::atomic<bool> loopDirty { true };
     std::atomic<int> voiceTrimStart { 0 }, voiceTrimLength { 1 };
@@ -170,6 +172,7 @@ private:
     std::atomic<float>* smear = nullptr;
     std::atomic<float>* tone = nullptr;
     std::atomic<float>* keepVowel = nullptr;
+    std::atomic<float>* pitchMode = nullptr;
     std::atomic<float>* onsetsOn = nullptr;
     std::atomic<float>* onsets = nullptr;
     std::atomic<float>* shiftOn = nullptr;
@@ -194,6 +197,17 @@ private:
     std::atomic<float>* binauralOn = nullptr;
     std::atomic<float>* binauralRate = nullptr;
     std::atomic<float>* binauralAmount = nullptr;
+    std::atomic<float>* tapeOn = nullptr;
+    std::atomic<float>* tapeWow = nullptr;
+    std::atomic<float>* tapeFlutter = nullptr;
+    std::atomic<float>* tapeDrive = nullptr;
+    std::atomic<float>* tapeAge = nullptr;
+    std::atomic<float>* shimmerOn = nullptr;
+    std::atomic<float>* shimmerAmount = nullptr;
+    std::atomic<float>* shimmerRise = nullptr;
+    std::atomic<float>* shimmerInterval = nullptr;
+    void setTape() noexcept;
+    void setShimmer() noexcept;
     std::atomic<float>* spaceFilterOn = nullptr;
     std::atomic<float>* spaceLow = nullptr;
     std::atomic<float>* spaceHigh = nullptr;

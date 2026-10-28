@@ -89,7 +89,10 @@ Each note has:
 - **Attack**: linear, 0 to 20 s.
 - **Release**: exponential, reaching -60 dB at the Release time (0 to 30 s).
 - **Velocity**: gain 0.35 + 0.65 x velocity, so soft notes are quieter but never vanish.
-- **Glide**: with Glide above 0, a new note slides from the last note's pitch.
+- **Glide**: with Glide above 0, a new note slides from the last note's pitch. Bloom bakes the
+  pitch into each long frame, so a Bloom note (Formant mode) builds its frames at its key and
+  glides and bends as a smooth varispeed on its output instead, with the envelope moved back so
+  the vowel holds.
 - **Hold**: freezes the grains where they are (see the Stretch doc).
 
 The loop moves from the message thread to the audio thread through `SourceExchange`, a
@@ -149,6 +152,33 @@ voice sounds the same size across the keyboard, and the knob moves it from there
 pitch shifting: the vowel moves with the key, so higher keys sound smaller and lower keys
 larger, and Formant moves it from there. With Formant at 0 the shifter then does nothing at
 all. In Bloom, Keep vowel off moves the envelope with the key too.
+
+### KEYS: Formant or STFT
+
+**KEYS** (parameter `pitchmode`, in the loop row) picks how a note is moved to its key.
+
+- **Formant** (the default, and how Sing always worked): in Grain the grains play the voice
+  faster or slower and the formant shifter above puts the vowel back; Bloom reads its
+  spectrum at the key and moves the envelope itself.
+- **STFT**: Grain or Bloom plays the voice at its root (only Spread's detune is applied), and
+  `StftPitchShifter` moves the note's mix to the key in the spectrum. Bloom's Harmonics then
+  follows the root's harmonics, which the shift carries to the key's. It adapts
+  stftPitchShift by Jürgen Hock (MIT, see THIRD_PARTY_NOTICES.md). A phase vocoder finds each
+  bin's exact frequency, the bins are read at bin / factor with their frequencies multiplied by
+  factor, and the phases run on at the new frequencies. With Keep vowel on, the spectral
+  envelope (log magnitudes smoothed in the cepstrum, lifter at 1 ms or 0.7 of the period) is
+  divided out before the shift and put back after, moved only by Formant. Off, the envelope
+  moves with the key, plus Formant.
+
+The library's defaults (1024-sample frames, 4x overlap) smeared the partials of low voices:
+on a 110 Hz tone shifted a fifth, the partials stood only 21 dB above the gaps between them.
+Sing uses frames of at least eight periods and 4096 samples at 48 kHz, with 8x overlap (about
+50 dB), and keeps each frame's power so every key plays at the root's level. The cepstrum runs
+on a spectrum a quarter as fine, and atan2, sin and cos are polynomial approximations.
+
+CPU: each STFT note costs about three times a Formant note's shifter. On the cloud build
+machine, 16 notes at Spread 50% took about 36% of a core in Formant mode and about 95% in
+STFT mode. A Mac is several times faster.
 
 
 ## CPU

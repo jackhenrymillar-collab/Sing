@@ -5,6 +5,7 @@
 #include "Effects/Air.h"
 #include "Effects/Binaural.h"
 #include "Effects/Space.h"
+#include "Effects/Tape.h"
 
 #include <functional>
 
@@ -273,4 +274,169 @@ TEST_CASE ("Binaural: each ear moves by half the beat, in opposite directions")
     std::vector<float> a ((size_t) 4800, 0.25f), c = a;
     off.process (a.data(), c.data(), 4800);
     CHECK (a == std::vector<float> ((size_t) 4800, 0.25f));
+}
+
+namespace
+{
+// How much of x, from 'from' on, is a sine at hz (its amplitude).
+double toneAmplitude (const std::vector<float>& x, double hz, int from, int to)
+{
+    double c = 0.0, s = 0.0;
+    for (int i = from; i < to; ++i)
+    {
+        c += x[(size_t) i] * std::cos (twoPi * hz * i / sr);
+        s += x[(size_t) i] * std::sin (twoPi * hz * i / sr);
+    }
+    return 2.0 * std::sqrt (c * c + s * s) / (to - from);
+}
+
+struct TapeRun
+{
+    std::vector<float> left, right;
+};
+
+TapeRun runTape (float wow, float flutter, float drive, float age, double hz, float amp, int n, bool on = true)
+{
+    Tape t;
+    t.prepare (sr);
+    t.set (on, wow, flutter, drive, age);
+    t.reset();
+    TapeRun r { sine (hz, n, amp), sine (hz, n, amp) };
+    for (int i = 0; i < n; i += 512)
+        t.process (r.left.data() + i, r.right.data() + i, std::min (512, n - i));
+    return r;
+}
+
+// The pitch of a sine over time, in cents from hz: one value per rising zero crossing.
+std::vector<double> centsTrack (const std::vector<float>& x, double hz, int from)
+{
+    std::vector<double> cents;
+    double last = -1.0;
+    for (size_t i = (size_t) from + 1; i < x.size(); ++i)
+        if (x[i - 1] < 0.0f && x[i] >= 0.0f)
+        {
+            const double at = (double) (i - 1) + x[i - 1] / (x[i - 1] - x[i]);
+            if (last >= 0.0)
+                cents.push_back (1200.0 * std::log2 (sr / (at - last) / hz));
+            last = at;
+        }
+    return cents;
+}
+} // namespace
+
+TEST_CASE ("Tape: off passes the signal untouched")
+{
+    const int n = 48000;
+    const auto r = runTape (0.5f, 0.5f, 0.5f, 0.5f, 440.0, 0.3f, n, false);
+    const auto dry = sine (440.0, n, 0.3f);
+    CHECK (r.left == dry);
+    CHECK (r.right == dry);
+}
+
+TEST_CASE ("Tape: Wow and Flutter sway the pitch, and both ears together")
+{
+    const int n = 6 * 48000;
+    auto peak = [] (const std::vector<double>& c)
+    {
+        double m = 0.0;
+        for (double v : c)
+            m = std::max (m, std::abs (v));
+        return m;
+    };
+    const auto still = runTape (0.0f, 0.0f, 0.0f, 0.0f, 1000.0, 0.25f, n);
+    const auto wow = runTape (1.0f, 0.0f, 0.0f, 0.0f, 1000.0, 0.25f, n);
+    const auto flutter = runTape (0.0f, 1.0f, 0.0f, 0.0f, 1000.0, 0.25f, n);
+    const double s = peak (centsTrack (still.left, 1000.0, 4800));
+    const double w = peak (centsTrack (wow.left, 1000.0, 4800));
+    const double f = peak (centsTrack (flutter.left, 1000.0, 4800));
+    std::printf ("  Tape pitch sway: still %.2f cents, Wow 100%% %.1f cents, Flutter 100%% %.1f cents\n", s, w, f);
+    CHECK (s < 0.5);
+    CHECK (w > 15.0);
+    CHECK (w < 40.0);
+    CHECK (f > 4.0);
+    CHECK (f < 15.0);
+    CHECK (wow.left == wow.right);
+}
+
+TEST_CASE ("Tape: Drive saturates softly and keeps the level")
+{
+    const int n = 48000;
+    const auto clean = runTape (0.0f, 0.0f, 0.0f, 0.0f, 200.0, 0.25f, n);
+    const auto driven = runTape (0.0f, 0.0f, 1.0f, 0.0f, 200.0, 0.25f, n);
+    const double cleanThird = db (toneAmplitude (clean.left, 600.0, 4800, n) / toneAmplitude (clean.left, 200.0, 4800, n));
+    const double drivenThird = db (toneAmplitude (driven.left, 600.0, 4800, n) / toneAmplitude (driven.left, 200.0, 4800, n));
+    const double levelChange = db (rms (driven.left.data() + 4800, n - 4800) / rms (clean.left.data() + 4800, n - 4800));
+    std::printf ("  Tape Drive: third harmonic %.1f dB clean, %.1f dB driven; level %+.1f dB\n", cleanThird, drivenThird, levelChange);
+    CHECK (cleanThird < -45.0);
+    CHECK (drivenThird > -30.0);
+    CHECK (std::abs (levelChange) < 1.5);
+}
+
+TEST_CASE ("Tape: Age rolls off the highs only")
+{
+    const int n = 48000;
+    auto change = [n] (double hz, float age)
+    {
+        const auto r = runTape (0.0f, 0.0f, 0.0f, age, hz, 0.1f, n);
+        return db (rms (r.left.data() + 4800, n - 4800) / rms (sine (hz, n, 0.1f).data() + 4800, n - 4800));
+    };
+    std::printf ("  Tape Age 100%%: 300 Hz %+.1f dB, 8 kHz %+.1f dB; Age 0: 8 kHz %+.1f dB\n",
+                 change (300.0, 1.0f), change (8000.0, 1.0f), change (8000.0, 0.0f));
+    CHECK (std::abs (change (300.0, 1.0f)) < 0.5);
+    CHECK (change (8000.0, 1.0f) < -15.0);
+    CHECK (std::abs (change (8000.0, 0.0f)) < 0.5);
+}
+
+namespace
+{
+// A note into Space for a second, then the tail; returns the left channel.
+std::vector<float> shimmerTail (bool on, int interval, float decay, float rise, int seconds, float hz = 220.0f, float amount = 1.0f)
+{
+    Space s;
+    s.prepare (sr, 512);
+    s.setDecay (decay);
+    s.setSize (0.6f);
+    s.setLevel (0.8f);
+    s.setShimmer (on, amount, rise, interval);
+    s.reset();
+    const int n = seconds * 48000;
+    auto l = sine (hz, n, 0.3f), r = l;
+    for (int i = 48000; i < n; ++i)
+        l[(size_t) i] = r[(size_t) i] = 0.0f;
+    for (int i = 0; i < n; i += 512)
+        s.process (l.data() + i, r.data() + i, std::min (512, n - i));
+    return l;
+}
+} // namespace
+
+TEST_CASE ("Space: Shimmer adds a halo an octave or a fifth up")
+{
+    const int from = 2 * 48000, to = 4 * 48000;
+    // At the default settings: Amount 40%, Rise 50%.
+    const auto plain = shimmerTail (false, 0, 6.0f, 0.5f, 4, 220.0f, 0.4f);
+    const auto octave = shimmerTail (true, 0, 6.0f, 0.5f, 4, 220.0f, 0.4f);
+    const auto fifth = shimmerTail (true, 1, 6.0f, 0.5f, 4, 220.0f, 0.4f);
+    const double plainUp = db (toneAmplitude (plain, 440.0, from, to) / toneAmplitude (plain, 220.0, from, to));
+    const double octaveUp = db (toneAmplitude (octave, 440.0, from, to) / toneAmplitude (octave, 220.0, from, to));
+    const double fifthUp = db (toneAmplitude (fifth, 330.0, from, to) / toneAmplitude (fifth, 220.0, from, to));
+    std::printf ("  Shimmer in the tail, against the note: octave %+.1f dB (none without %+.1f), fifth %+.1f dB\n",
+                 octaveUp, plainUp, fifthUp);
+    CHECK (plainUp < -20.0);
+    CHECK (octaveUp > -12.0);
+    CHECK (fifthUp > -12.0);
+}
+
+TEST_CASE ("Space: Shimmer at the top of Rise and Decay fades away, never runs off")
+{
+    const auto x = shimmerTail (true, 1, 60.0f, 1.0f, 40, 150.0f);
+    const auto at = [&x] (int second) { return db (rms (x.data() + second * 48000, 5 * 48000)); };
+    float peak = 0.0f;
+    for (float v : x)
+        peak = std::max (peak, std::abs (v));
+    std::printf ("  Shimmer fifth, Rise 100%%, Decay 60 s: peak %.2f; tail %.1f dB at 5 s, %.1f dB at 20 s, %.1f dB at 35 s\n",
+                 peak, at (5), at (20), at (35));
+    CHECK (std::isfinite (peak));
+    CHECK (peak < 3.0f);
+    CHECK (at (35) < at (20));
+    CHECK (at (20) < at (5));
 }

@@ -15,6 +15,11 @@ juce::StringArray engineNames()
     return { "Grain", "Bloom" };
 }
 
+juce::StringArray pitchModeNames()
+{
+    return { "Formant", "STFT" };
+}
+
 juce::String formatSeconds (float s)
 {
     if (s < 0.995f)
@@ -66,6 +71,8 @@ juce::String formatBeat (float hz) { return juce::String (hz, hz < 9.95f ? 1 : 0
 juce::StringArray filterSlopeNames() { return { "Sharp", "6 dB", "12 dB" }; }
 
 juce::StringArray moveShapeNames() { return { "Drift", "Wave", "Breath" }; }
+
+juce::StringArray shimmerIntervalNames() { return { "Octave", "Fifth" }; }
 
 namespace
 {
@@ -184,6 +191,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::spaceDecay, v }, "Space Decay",
                                                        skewed (Space::minDecaySeconds, Space::maxDecaySeconds, 6.0f), 6.3f, withText (formatSeconds)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::spaceSize, v }, "Space Size", Range { 0.0f, 100.0f, 0.1f }, 67.5f, withText (formatPercent)));
+    // Tape and Shimmer start off.
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::tapeOn, v }, "Tape On", false));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::tapeWow, v }, "Tape Wow", Range { 0.0f, 100.0f, 0.1f }, 30.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::tapeFlutter, v }, "Tape Flutter", Range { 0.0f, 100.0f, 0.1f }, 20.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::tapeDrive, v }, "Tape Drive", Range { 0.0f, 100.0f, 0.1f }, 35.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::tapeAge, v }, "Tape Age", Range { 0.0f, 100.0f, 0.1f }, 40.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::shimmerOn, v }, "Shimmer On", false));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::shimmerAmount, v }, "Shimmer Amount", Range { 0.0f, 100.0f, 0.1f }, 40.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::shimmerRise, v }, "Shimmer Rise", Range { 0.0f, 100.0f, 0.1f }, 50.0f, withText (formatPercent)));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::shimmerInterval, v }, "Shimmer Interval", shimmerIntervalNames(), 0));
     // Also the host's bypass switch (see SingProcessor::getBypassParameter). Clicking the evening star toggles it.
     // Movement. Every orbit starts at 0, so sessions from before it sound the same.
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamID::orbitStretch, v }, "Stretch Orbit", Range { 0.0f, 100.0f, 0.1f }, 0.0f, withText (formatOrbit)));
@@ -197,6 +214,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::moveSync, v }, "Movement Sync", false));
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::moveBars, v }, "Movement Bars", moveBarNames(), 4));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::moveEach, v }, "Movement Each Note", true));
+
+    // Formant (the default) leaves older sessions sounding as they did.
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamID::pitchMode, v }, "Pitch Mode", pitchModeNames(), 0));
 
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamID::bypass, v }, "Bypass", false));
 
