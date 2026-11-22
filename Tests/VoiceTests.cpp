@@ -153,6 +153,45 @@ TEST_CASE ("The moving placeholder voices are pitched where they say, and change
     CHECK (12.0f * std::log2 (early.hz / late.hz) > 1.2f);
 }
 
+TEST_CASE ("The shifting vowels change vowel slowly, and the bright ones are bright")
+{
+    // How much of a stretch's energy is high: its k-th difference (a high-pass, 6k dB an octave)
+    // against itself.
+    auto highShare = [] (const std::vector<float>& x, double from, double to, int k)
+    {
+        std::vector<double> d (x.begin() + (long) (from * sr), x.begin() + (long) (to * sr));
+        double e = 0.0;
+        for (double v : d)
+            e += v * v;
+        for (int pass = 0; pass < k; ++pass)
+            for (size_t i = d.size() - 1; i > 0; --i)
+                d[i] -= d[i - 1];
+        double h = 0.0;
+        for (size_t i = (size_t) k; i < d.size(); ++i)
+            h += d[i] * d[i];
+        return h / std::max (e, 1.0e-12);
+    };
+
+    for (const auto v : { PlaceholderVowel::vowelWheel, PlaceholderVowel::brightSoprano, PlaceholderVowel::glassChoir,
+                          PlaceholderVowel::roundingEe, PlaceholderVowel::morningAe, PlaceholderVowel::duskVowels,
+                          PlaceholderVowel::whistleEe, PlaceholderVowel::slowWords })
+        CHECK (placeholderSeconds (v) == 16.0f);
+
+    // The wheel is at "ooh" near the start and "ee" halfway, which is far brighter.
+    const auto wheel = makePlaceholderVoice (PlaceholderVowel::vowelWheel, sr, 16.0f);
+    CHECK (highShare (wheel.samples, 7.5, 8.5, 2) > 3.0 * highShare (wheel.samples, 0.5, 1.5, 2));
+
+    // The very bright ones have many times the top end of High Ee, the brightest voice before them.
+    const auto highEe = makePlaceholderVoice (PlaceholderVowel::highEe, sr, 8.0f);
+    const double before = highShare (highEe.samples, 1.0, 7.0, 2);
+    for (const auto v : { PlaceholderVowel::brightSoprano, PlaceholderVowel::glassChoir,
+                          PlaceholderVowel::roundingEe, PlaceholderVowel::whistleEe })
+    {
+        const auto bright = makePlaceholderVoice (v, sr, 16.0f);
+        CHECK (highShare (bright.samples, 2.0, 14.0, 2) > 8.0 * before);
+    }
+}
+
 TEST_CASE ("The synth sources move their filter, and the instruments behave like theirs")
 {
     // How bright a stretch of sound is: the share of its energy above 1.5 kHz, from the

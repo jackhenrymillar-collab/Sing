@@ -113,6 +113,12 @@ struct Frame
     double brilliance = 0.9;     // lifts the harmonics above the top formant: 0 none, 1 most
     double level = 1.0;          // loudness
     double tilt = 1.0;           // how fast the harmonics fall away: higher is darker
+    // Sheen: an even bed of upper harmonics laid over the vowel, from sheenFrom up to 16 kHz,
+    // for the very bright voices. Off unless sheenDb is set; it is in dB below the loudest
+    // harmonic, and falls gently, sheenSlope dB an octave.
+    double sheenDb = -200.0;
+    double sheenFrom = 4000.0;
+    double sheenSlope = -9.0;
 };
 
 struct Score
@@ -120,6 +126,7 @@ struct Score
     int singers = 1;
     double spreadCents = 0.0;    // how far apart the singers are tuned
     Frame (*at) (double t) = nullptr;
+    double seconds = 8.0;        // how long the take is written for
 };
 
 Frame openingOoh (double t)
@@ -268,6 +275,188 @@ Frame fallingSigh (double t)
     return f;
 }
 
+//==============================================================================
+// Voices that shift slowly from vowel to vowel. Each walks a path of vowels across a 16 s take,
+// settling on each before it moves on, so a long loop drifts through them and a short one picks
+// out a single vowel. The bright ones are sopranos: little tilt, full Brilliance, and the first
+// formant tuned up to sit on the note, as sopranos do. Still pure harmonic tone, no breath.
+
+// Women's vowels from Peterson and Barney (1952), with fourth formants added; the French "u"
+// (as in "lune") from Gendrot and Adda-Decker's measurements. Men's "ae", "aw", "uh" and "er"
+// from Peterson and Barney.
+constexpr Vowel fEeFormants { { { 310, 45 }, { 2790, 120 }, { 3310, 160 }, { 4300, 250 } } };
+constexpr Vowel fIhFormants { { { 430, 60 }, { 2480, 120 }, { 3070, 160 }, { 4200, 250 } } };
+constexpr Vowel fEhFormants { { { 610, 70 }, { 2330, 120 }, { 2990, 160 }, { 4100, 250 } } };
+constexpr Vowel fAeFormants { { { 860, 90 }, { 2050, 120 }, { 2850, 160 }, { 4000, 250 } } };
+constexpr Vowel fAhFormants { { { 850, 90 }, { 1220, 100 }, { 2810, 150 }, { 3900, 250 } } };
+constexpr Vowel fOhFormants { { { 560, 70 }, { 1000, 90 }, { 2800, 150 }, { 3900, 250 } } };
+constexpr Vowel fOohFormants { { { 370, 55 }, { 950, 90 }, { 2670, 150 }, { 3800, 250 } } };
+constexpr Vowel fUeFormants { { { 300, 50 }, { 1900, 110 }, { 2500, 140 }, { 3900, 250 } } };
+constexpr Vowel aeFormants  { { { 660, 80 }, { 1720, 100 }, { 2410, 120 }, { 3300, 200 } } };
+constexpr Vowel awFormants  { { { 570, 80 }, { 840, 90 }, { 2410, 120 }, { 3300, 200 } } };
+constexpr Vowel uhFormants  { { { 640, 80 }, { 1190, 90 }, { 2390, 120 }, { 3300, 200 } } };
+constexpr Vowel erFormants  { { { 490, 70 }, { 1350, 90 }, { 1690, 110 }, { 3300, 200 } } };
+
+// Walks a path of vowels as t goes from 0 to 1, easing in and out of each so it dwells there.
+template <size_t N>
+Vowel path (const std::array<Vowel, N>& vowels, double t)
+{
+    const double pos = std::clamp (t, 0.0, 1.0) * (double) (N - 1);
+    const size_t i = std::min ((size_t) pos, N - 2);
+    return mix (vowels[i], vowels[i + 1], smoothstep (0.0, 1.0, pos - (double) i));
+}
+
+// A soprano opens her mouth so the first formant stays above the note.
+Vowel tunedTo (Vowel v, double f0)
+{
+    v[0].hz = std::max (v[0].hz, 1.08 * f0);
+    v[1].hz = std::max (v[1].hz, 1.6 * v[0].hz);
+    return v;
+}
+
+// A trained tenor's ring: the third and fourth formants drawn together near 3 kHz.
+Vowel withRing (Vowel v)
+{
+    v[2] = { 2800, 110 };
+    v[3] = { 3200, 140 };
+    return v;
+}
+
+// The very bright ones: a bed of upper harmonics from fromHz to 16 kHz, db below the loudest
+// (for a 500 Hz voice),
+// so the top carries on shining instead of dying away above the formants.
+void shine (Frame& f, double fromHz, double db)
+{
+    f.sheenFrom = fromHz;
+    f.sheenDb = db;
+}
+
+// How far along the take is, 0 to 1, for a 16 s score.
+double along (double t) { return std::clamp (t / 16.0, 0.0, 1.0); }
+
+Frame vowelWheel (double t)
+{
+    // "ooh, oh, ah, eh, ee" and back again, opening and brightening on the way to "ee".
+    static const std::array<Vowel, 5> wheel { oohFormants, ohFormants, ahFormants, ehFormants, eeFormants };
+    const double p = 0.5 - 0.5 * std::cos (twoPi * along (t));
+    Frame f;
+    f.f0 = 220.0;
+    f.vowel = path (wheel, p);
+    f.vibratoDepth = 0.007 * rise (0.4, 1.6, t);
+    f.vibratoRate = 5.1;
+    f.level = 0.85 + 0.15 * std::sin (3.14159265358979 * p);
+    f.tilt = 1.05 - 0.25 * p;
+    return f;
+}
+
+Frame brightSoprano (double t)
+{
+    // A bright soprano on E (659 Hz): "ee, ih, eh, ae", then back to "ee".
+    static const std::array<Vowel, 7> words { fEeFormants, fIhFormants, fEhFormants, fAeFormants, fEhFormants, fIhFormants, fEeFormants };
+    Frame f;
+    f.f0 = 659.25;
+    f.vowel = tunedTo (path (words, along (t)), f.f0);
+    f.vibratoDepth = 0.012 * rise (0.5, 2.0, t);
+    f.vibratoRate = 5.7 + 0.2 * std::sin (twoPi * 0.11 * t);
+    f.brilliance = 1.0;
+    f.tilt = 0.6;
+    shine (f, 4000.0, -22.0);
+    return f;
+}
+
+Frame glassChoir (double t)
+{
+    // Six bright sopranos on C (523 Hz) easing "ee, ih, ae, ih, ee".
+    static const std::array<Vowel, 5> words { fEeFormants, fIhFormants, fAeFormants, fIhFormants, fEeFormants };
+    Frame f;
+    f.f0 = 523.25;
+    f.vowel = tunedTo (path (words, along (t)), f.f0);
+    f.vibratoDepth = 0.009;
+    f.vibratoRate = 5.5;
+    f.brilliance = 1.0;
+    f.tilt = 0.65;
+    shine (f, 4000.0, -25.0);
+    return f;
+}
+
+Frame roundingEe (double t)
+{
+    // A silvery "ee" on G (392 Hz) that rounds its lips to a French "u", opens again, slips to "ih"
+    // and comes home.
+    static const std::array<Vowel, 5> words { fEeFormants, fUeFormants, fEeFormants, fIhFormants, fEeFormants };
+    Frame f;
+    f.f0 = 392.0;
+    f.vowel = tunedTo (path (words, along (t)), f.f0);
+    f.vibratoDepth = 0.008 * rise (0.4, 1.8, t);
+    f.vibratoRate = 5.4;
+    f.brilliance = 1.0;
+    f.tilt = 0.7;
+    shine (f, 4000.0, -24.0);
+    return f;
+}
+
+Frame morningAe (double t)
+{
+    // A tenor on A (220 Hz) with a singer's ring: "ah" brightens to "ae" and "eh", and back.
+    static const std::array<Vowel, 5> words { ahFormants, aeFormants, ehFormants, aeFormants, ahFormants };
+    const double p = along (t);
+    Frame f;
+    f.f0 = 220.0;
+    f.vowel = withRing (path (words, p));
+    f.vibratoDepth = 0.009 * rise (0.4, 1.6, t);
+    f.vibratoRate = 5.4;
+    f.brilliance = 0.95;
+    f.tilt = 0.8;
+    f.level = 0.9 + 0.1 * std::sin (3.14159265358979 * p);
+    shine (f, 4000.0, -26.0);
+    return f;
+}
+
+Frame duskVowels (double t)
+{
+    // A low, dark voice on A (110 Hz), murmuring "aw, uh, er, ooh" and back to "aw". The bright ones'
+    // opposite, for underneath them.
+    static const std::array<Vowel, 5> words { awFormants, uhFormants, erFormants, oohFormants, awFormants };
+    Frame f;
+    f.f0 = 110.0;
+    f.vowel = path (words, along (t));
+    f.vibratoDepth = 0.004 * rise (0.8, 2.5, t);
+    f.vibratoRate = 4.6;
+    f.brilliance = 0.4;
+    f.tilt = 1.3;
+    return f;
+}
+
+Frame whistleEe (double t)
+{
+    // Very high, on A (880 Hz), near the top of a soprano: a pure, shining "ee" easing to "ih" and
+    // back twice, two singers a hair apart so it shimmers.
+    const double ease = 0.5 - 0.5 * std::cos (twoPi * 2.0 * along (t));
+    Frame f;
+    f.f0 = 880.0;
+    f.vowel = tunedTo (mix (fEeFormants, fIhFormants, ease), f.f0);
+    f.vibratoDepth = 0.007 * rise (0.6, 2.0, t);
+    f.vibratoRate = 5.9;
+    f.brilliance = 1.0;
+    f.tilt = 0.7;
+    shine (f, 4000.0, -22.0);
+    return f;
+}
+
+Frame slowWords (double t)
+{
+    // An alto on D (294 Hz) drawing out three diphthongs: "ah-ee", "oh-ee", "ah-oo", back to "ah".
+    static const std::array<Vowel, 7> words { fAhFormants, fEeFormants, fOhFormants, fEeFormants, fAhFormants, fOohFormants, fAhFormants };
+    Frame f;
+    f.f0 = 293.66;
+    f.vowel = tunedTo (path (words, along (t)), f.f0);
+    f.vibratoDepth = 0.008 * rise (0.4, 1.6, t);
+    f.vibratoRate = 5.2;
+    f.brilliance = 0.9;
+    f.tilt = 0.85;
+    return f;
+}
+
 Score scoreFor (PlaceholderVowel v)
 {
     switch (v)
@@ -282,13 +471,21 @@ Score scoreFor (PlaceholderVowel v)
         case PlaceholderVowel::slowWah:       return { 1, 0.0, slowWah };
         case PlaceholderVowel::overtoneDrone: return { 1, 0.0, overtoneDrone };
         case PlaceholderVowel::fallingSigh:   return { 1, 0.0, fallingSigh };
+        case PlaceholderVowel::vowelWheel:    return { 1, 0.0, vowelWheel, 16.0 };
+        case PlaceholderVowel::brightSoprano: return { 1, 0.0, brightSoprano, 16.0 };
+        case PlaceholderVowel::glassChoir:    return { 6, 10.0, glassChoir, 16.0 };
+        case PlaceholderVowel::roundingEe:    return { 1, 0.0, roundingEe, 16.0 };
+        case PlaceholderVowel::morningAe:     return { 1, 0.0, morningAe, 16.0 };
+        case PlaceholderVowel::duskVowels:    return { 1, 0.0, duskVowels, 16.0 };
+        case PlaceholderVowel::whistleEe:     return { 2, 4.0, whistleEe, 16.0 };
+        case PlaceholderVowel::slowWords:     return { 1, 0.0, slowWords, 16.0 };
         default:                              return {};
     }
 }
 
 PlaceholderVoice singScore (const Score& score, double sr, int n)
 {
-    constexpr double designSeconds = 8.0;
+    const double designSeconds = score.seconds;
     constexpr int maxHarmonics = 160;
     constexpr int block = 64;
     const double dur = (double) n / sr;
@@ -351,8 +548,27 @@ PlaceholderVoice singScore (const Score& score, double sr, int n)
                 const double fade = 1.0 - smoothstep (0.75 * topHz, topHz, hf);
                 const double a = hf < topHz ? fade * lift * vowelGain (fr.vowel, hf) / std::pow ((double) h, fr.tilt) : 0.0;
                 s.amp[(size_t) h] = a;
-                power += a * a;
             }
+            if (fr.sheenDb > -150.0)
+            {
+                double loudest = 0.0;
+                for (int h = 1; h <= maxHarmonics; ++h)
+                    loudest = std::max (loudest, s.amp[(size_t) h]);
+                // Level per harmonic for a 500 Hz voice: a lower voice has more harmonics up
+                // there, so each is quieter and the bed is as bright whatever the note.
+                const double bed = loudest * std::pow (10.0, fr.sheenDb / 20.0) * std::sqrt (std::min (f, 1000.0) / 500.0);
+                for (int h = 1; h <= maxHarmonics; ++h)
+                {
+                    const double hf = f * h;
+                    if (hf >= topHz)
+                        break;
+                    const double fade = 1.0 - smoothstep (0.75 * topHz, topHz, hf);
+                    const double onset = smoothstep (0.6 * fr.sheenFrom, fr.sheenFrom, hf);
+                    s.amp[(size_t) h] += bed * onset * fade * std::pow (std::max (hf, fr.sheenFrom) / fr.sheenFrom, fr.sheenSlope / 6.0206);
+                }
+            }
+            for (int h = 1; h <= maxHarmonics; ++h)
+                power += s.amp[(size_t) h] * s.amp[(size_t) h];
             s.norm = 1.0 / std::sqrt (std::max (power, 1.0e-12));
             const int lastTop = s.top;
             s.top = std::clamp ((int) (topHz / f), 1, maxHarmonics);
@@ -417,7 +633,9 @@ PlaceholderVoice singScore (const Score& score, double sr, int n)
 
 float placeholderSeconds (PlaceholderVowel vowel)
 {
-    return scoreFor (vowel).at != nullptr || isPlaceholderSource (vowel) ? 8.0f : 5.0f;
+    if (const auto score = scoreFor (vowel); score.at != nullptr)
+        return (float) score.seconds;
+    return isPlaceholderSource (vowel) ? 8.0f : 5.0f;
 }
 
 PlaceholderVoice makePlaceholderVoice (PlaceholderVowel vowel, double sr, float seconds)

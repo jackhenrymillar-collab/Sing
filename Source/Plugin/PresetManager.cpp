@@ -60,6 +60,18 @@ namespace
         { "Tidal Wah",      PlaceholderVowel::slowWah,       1.5f,  8.0f,  15.0f, 30.0f,  0.0f,   12.5f, 75.0f, 20.0f, 0,  0,      0.0f, 45.0f },
         { "Throat Song",    PlaceholderVowel::overtoneDrone, 2.0f,  9.0f,  25.0f, 25.0f,  0.0f,    5.0f, 90.0f, 25.0f, 2,  0,      0.0f, 50.0f },
         { "Evening Sigh",   PlaceholderVowel::fallingSigh,   3.5f, 12.0f,  40.0f, 45.0f,  0.0f,   40.0f, 50.0f, 35.0f, 0,  1,      0.0f, 70.0f,   0.0f, 20.0f, 30.0f },
+        // Vowels that shift slowly over a 16 s take, four of them very bright. Low Stretch and a loop
+        // over nearly all of it, so a held note drifts through every vowel in about a minute.
+        //  name              voice                          attack release stretch spread formant  start length fade  dir engine air    space  orbit spread/formant, wander
+        { "Turning Vowels",  PlaceholderVowel::vowelWheel,    2.5f, 10.0f,  25.0f, 40.0f,  0.0f,    3.0f, 94.0f, 20.0f, 2,  0,      0.0f, 50.0f },
+        { "Sunlit Soprano",  PlaceholderVowel::brightSoprano, 3.0f, 12.0f,  25.0f, 50.0f,  0.0f,    3.0f, 94.0f, 20.0f, 2,  1,      0.0f, 70.0f },
+        { "Ice Choir",       PlaceholderVowel::glassChoir,    3.5f, 12.0f,  30.0f, 60.0f,  0.0f,    3.0f, 94.0f, 25.0f, 2,  1,      0.0f, 80.0f,   0.0f,  0.0f, 20.0f,
+          { .singers = 4, .detune = 10.0f, .vibrato = 35.0f, .width = 90.0f } },
+        { "Silver Lining",   PlaceholderVowel::roundingEe,    2.5f, 10.0f,  25.0f, 45.0f,  0.0f,    3.0f, 94.0f, 20.0f, 2,  0,      0.0f, 60.0f },
+        { "Daybreak Tenor",  PlaceholderVowel::morningAe,     2.0f,  9.0f,  25.0f, 35.0f,  0.0f,    3.0f, 94.0f, 20.0f, 2,  0,      0.0f, 50.0f },
+        { "Dusk Murmur",     PlaceholderVowel::duskVowels,    3.0f, 12.0f,  30.0f, 40.0f,  0.0f,    3.0f, 94.0f, 25.0f, 2,  1,      0.0f, 65.0f },
+        { "Starlight",       PlaceholderVowel::whistleEe,     4.0f, 14.0f,  30.0f, 65.0f,  0.0f,    3.0f, 94.0f, 25.0f, 2,  1,      0.0f, 85.0f,  30.0f,  0.0f,  0.0f },
+        { "Slow Words",      PlaceholderVowel::slowWords,     2.5f, 10.0f,  20.0f, 40.0f,  0.0f,    3.0f, 94.0f, 20.0f, 2,  0,      0.0f, 55.0f },
         // Synths: the filter or the waveshape moves, so gentle Stretch lets the sweep be heard.
         //  name              voice                          attack release stretch spread formant  start length fade  dir engine air    space  orbit spread/formant, wander
         { "Filter Tide",     PlaceholderVowel::sweepingSaw,   1.5f,  8.0f,  25.0f, 40.0f,  0.0f,    2.0f, 96.0f, 20.0f, 2,  0,      0.0f, 45.0f },

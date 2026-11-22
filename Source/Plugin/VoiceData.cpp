@@ -33,6 +33,15 @@ namespace
         { PlaceholderVowel::slowWah,       "slowWah",       "Slow Wah",       "\"Ooh\" and \"ah\" in turn, opening and closing (generated)" },
         { PlaceholderVowel::overtoneDrone, "overtoneDrone", "Overtone Drone", "A throat-sung drone with a sweeping, whistled overtone (generated)" },
         { PlaceholderVowel::fallingSigh,   "fallingSigh",   "Falling Sigh",   "An \"ah\" that sighs down a tone, softening as it falls (generated)" },
+        // Vowels that shift slowly, some very bright.
+        { PlaceholderVowel::vowelWheel,    "vowelWheel",    "Vowel Wheel",    "A tenor turning \"ooh, oh, ah, eh, ee\" and back (generated)" },
+        { PlaceholderVowel::brightSoprano, "brightSoprano", "Bright Soprano", "A bright soprano on \"ee, ih, eh, ae\" and back (generated)" },
+        { PlaceholderVowel::glassChoir,    "glassChoir",    "Glass Choir",    "Six bright sopranos easing between \"ee\", \"ih\" and \"ae\" (generated)" },
+        { PlaceholderVowel::roundingEe,    "roundingEe",    "Rounding Ee",    "A silvery \"ee\" that rounds to a French \"u\" and back (generated)" },
+        { PlaceholderVowel::morningAe,     "morningAe",     "Morning Ae",     "A ringing tenor, \"ah\" brightening to \"ae\" and \"eh\" (generated)" },
+        { PlaceholderVowel::duskVowels,    "duskVowels",    "Dusk Vowels",    "A low, dark voice murmuring \"aw, uh, er, ooh\" (generated)" },
+        { PlaceholderVowel::whistleEe,     "whistleEe",     "Whistle Ee",     "A very high, shining \"ee\" easing to \"ih\" (generated)" },
+        { PlaceholderVowel::slowWords,     "slowWords",     "Slow Words",     "An alto drawing out \"ah-ee\", \"oh-ee\", \"ah-oo\" (generated)" },
         // Synths and instruments.
         { PlaceholderVowel::sweepingSaw,   "sweepingSaw",   "Sweeping Saw", "Three detuned saws, a filter opening and closing (generated)" },
         { PlaceholderVowel::pwmStrings,    "pwmStrings",    "PWM Strings", "A string machine of slowly sweeping pulse waves (generated)" },

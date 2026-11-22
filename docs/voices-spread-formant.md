@@ -58,6 +58,28 @@ Their presets use gentler Stretch (15 to 40 on Grain) than the first ones, becau
 slows reading exponentially (about 1/100 speed at 80) and the movement would otherwise freeze.
 New voices are levelled by loudness (about -16 dB RMS) rather than peak.
 
+Eight more shift slowly from vowel to vowel over a 16 s take, easing into each vowel and
+dwelling there before moving on. Four are very bright: on top of Brilliance they carry a
+"sheen", an even bed of upper harmonics from 4 kHz to 16 kHz (about 20 dB down), still pure
+harmonic tone with no noise. The sopranos tune their first formant up to sit above the note,
+as real sopranos do. Vowel values for women are Peterson and Barney's; the French "u" is from
+published French vowel measurements.
+
+| Voice | Root | Vowels |
+|---|---|---|
+| Vowel Wheel | A2 220 Hz | "ooh, oh, ah, eh, ee" and back |
+| Bright Soprano | E4 659 Hz | "ee, ih, eh, ae" and back, very bright |
+| Glass Choir | C4 523 Hz | six sopranos 10 cents apart, "ee, ih, ae, ih, ee", very bright |
+| Rounding Ee | G3 392 Hz | "ee" rounds to French "u", opens, slips to "ih", very bright |
+| Morning Ae | A2 220 Hz | tenor with a singer's ring, "ah, ae, eh, ae, ah", bright |
+| Dusk Vowels | A1 110 Hz | low and dark, "aw, uh, er, ooh, aw" |
+| Whistle Ee | A4 880 Hz | two voices a hair apart, "ee" easing to "ih" twice, very bright |
+| Slow Words | D3 294 Hz | alto diphthongs "ah-ee", "oh-ee", "ah-oo" |
+
+Their presets (Turning Vowels, Sunlit Soprano, Ice Choir, Silver Lining, Daybreak Tenor, Dusk
+Murmur, Starlight, Slow Words) loop nearly the whole take at Stretch 20 to 30, so a held note
+passes through every vowel in about a minute.
+
 Twenty more are synths and instruments, made in `PlaceholderSources.cpp`. Each is a bank of
 sine partials described block by block, so filters and waveshapes are worked out per harmonic:
 a moving cutoff or shape never aliases or clicks, and there is no noise in any of them.

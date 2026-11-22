@@ -30,6 +30,16 @@ enum class PlaceholderVowel
     overtoneDrone,  // a throat-sung drone whose whistling overtone sweeps up and down
     fallingSigh,    // an "ah" that sighs down a tone, softening as it falls
 
+    // Voices that shift slowly from vowel to vowel over a 16 s take, settling on each one.
+    vowelWheel,     // a tenor turning "ooh, oh, ah, eh, ee" and back
+    brightSoprano,  // a bright soprano "ee, ih, eh, ae" and back
+    glassChoir,     // six bright sopranos easing between "ee", "ih" and "ae"
+    roundingEe,     // a silvery "ee" that rounds to a French "u" and back, then to "ih"
+    morningAe,      // a ringing tenor: "ah" brightening to "ae" and "eh"
+    duskVowels,     // a low, dark voice: "aw, uh, er, ooh"
+    whistleEe,      // a very high, near-pure "ee" and "ih", shimmering
+    slowWords,      // an alto drawing out "ah-ee", "oh-ee", "ah-oo"
+
     // Synths (PlaceholderSources.cpp): a waveform whose filter or shape moves.
     sweepingSaw,    // three detuned saws, a ladder filter opening and closing
     pwmStrings,     // a string machine of slowly sweeping pulse waves
@@ -61,6 +71,9 @@ constexpr PlaceholderVowel allPlaceholderVowels[] {
     PlaceholderVowel::wakingAh, PlaceholderVowel::smallChoir, PlaceholderVowel::lowOm,
     PlaceholderVowel::highEe, PlaceholderVowel::slowWah, PlaceholderVowel::overtoneDrone,
     PlaceholderVowel::fallingSigh,
+    PlaceholderVowel::vowelWheel, PlaceholderVowel::brightSoprano, PlaceholderVowel::glassChoir,
+    PlaceholderVowel::roundingEe, PlaceholderVowel::morningAe, PlaceholderVowel::duskVowels,
+    PlaceholderVowel::whistleEe, PlaceholderVowel::slowWords,
     PlaceholderVowel::sweepingSaw, PlaceholderVowel::pwmStrings, PlaceholderVowel::morphPad,
     PlaceholderVowel::wobbleBass, PlaceholderVowel::syncSweep, PlaceholderVowel::supersawRise,
     PlaceholderVowel::fmMorph, PlaceholderVowel::wavefoldDrone, PlaceholderVowel::flangedSaw,
@@ -82,10 +95,11 @@ struct PlaceholderVoice
 bool isPlaceholderSource (PlaceholderVowel vowel);
 PlaceholderVoice makePlaceholderSource (PlaceholderVowel vowel, double sampleRate, float seconds);
 
-// How long the factory copy of each voice is: 5 s for the first four, 8 s for the rest.
+// How long the factory copy of each voice is: 5 s for the first four, 16 s for the slowly
+// shifting vowels, 8 s for the rest.
 float placeholderSeconds (PlaceholderVowel vowel);
 
-// The moving voices are written for 8 s and squeezed or stretched to fit other lengths.
+// The moving voices are written for their own length (8 or 16 s) and squeezed or stretched to fit other lengths.
 PlaceholderVoice makePlaceholderVoice (PlaceholderVowel vowel, double sampleRate = 48000.0, float seconds = 5.0f);
 
 } // namespace sing
